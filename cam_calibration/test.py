@@ -17,19 +17,22 @@ def callback(data):
     information.append(data)
 
 def image_callback_1(msg):
-    rospy.loginfo("Image 1 recieving")
+    idcheck = msg.header.stamp
+    rospy.loginfo(idcheck)
+    #rospy.loginfo("Image 1 recieving {}".format(msg.header.frame_id)
     #rospy.loginfo(msg)
     cv_image = bridge.imgmsg_to_cv2(msg,"passthrough")
     
-    image1_filename ="Fisheye1/Image1_{}.png".format(rospy.Time.now())
+    image1_filename ="Fisheye1/Image1_{}.png".format(idcheck)
     cv2.imwrite(image1_filename, cv_image)
  
 def image_callback_2(msg):
-    rospy.loginfo("Image 2 recieving")
+    idcheck = msg.header.stamp
+    rospy.loginfo(idcheck)  
     #rospy.loginfo(msg)
     cv_image = bridge.imgmsg_to_cv2(msg,"passthrough")
     
-    image2_filename ="Fisheye2/Image2_{}.png".format(rospy.Time.now())
+    image2_filename ="Fisheye2/Image2_{}.png".format(idcheck)
     cv2.imwrite(image2_filename, cv_image)
        
 
