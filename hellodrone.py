@@ -6,14 +6,19 @@
 import airsim
 import os
 import time
+import numpy as np
+import cv2
+
 
 from controller_m.gen_traj import Generate
+from perception.perception import Perception
 lead = "Drone_L"
 chase = "Drone_C"
 
 # connect to the AirSim simulator
 client = airsim.MultirotorClient()
 client.confirmConnection()
+# client.reset()
 
 curr_state = client.simGetVehiclePose(lead)
 print("lead state", curr_state)
@@ -39,34 +44,74 @@ client.takeoffAsync(10.0, chase).join()
 # curr_state2 = client.getMultirotorState(chase)
 # print("chaser state", curr_state2)
 
-pose = client.simGetVehiclePose(lead)
-print("lead state", pose.position)
-####################################################################################################################
-cur_x = pose.position.x_val
-cur_y = pose.position.y_val
-cur_z = pose.position.z_val
-start_state = [cur_x,cur_y,cur_z,         0,0,0,   0,0,0]
-goal_state =  [cur_x+10,cur_y,cur_z-10,   0,0,1,   0,9.81,0]
+# pose = client.simGetVehiclePose(lead)
+# print("lead state", pose.position)
 
-d1 = Generate()
-time_alloc = 3
-position, velocity = d1.generate_traj(starting_state=start_state, goal_state=goal_state, Tf = time_alloc, vis=False)
-x = position[:,0]
-y = position[:,1]
-z = position[:,2]
-vx = velocity[:,0]
-vy = velocity[:,1]
-vz = velocity[:,2]
+# Take picture ###################################################################################################################
+vision = Perception(client)
+img_rgb = vision.capture_RGB(client)
+cv2.imshow("pic",img_rgb)
+cv2.waitKey(0)
+cv2.destroyAllWindows()
 
-dt = time_alloc/len(vx)
-for i in range(len(vx)):
-    print("iter: ",i)
-    client.moveByVelocityAsync(vx[i],vy[i],vz[i],dt,vehicle_name=lead).join()
-    # time.sleep(2)
+img_segment = vision.capture_segment(client)
+cv2.imshow("pic",img_segment)
+cv2.waitKey(0)
+cv2.destroyAllWindows()
 
-# client.moveToZAsync(10,2, vehicle_name=lead).join()
-curr_state = client.simGetVehiclePose(lead)
-print("lead state", curr_state)
+# Chase Drone Movement ###################################################################################################################
+
+count = 0
+while True:
+    dt_move = 3
+    # Lead Drone Movement ###################################################################################################################
+    client.moveByVelocityAsync(1,0,0,dt_move,vehicle_name=lead).join()
+
+    # identify location of lead
+    lead_pose = [client.simGetVehiclePose(lead).position.x_val, client.simGetVehiclePose(lead).position.y_val, client.simGetVehiclePose(lead).position.z_val]
+    print("Lead position",lead_pose)
+
+    curr_pose_chase = [client.simGetVehiclePose(chase).position.x_val, client.simGetVehiclePose(chase).position.y_val, client.simGetVehiclePose(chase).position.z_val]
+
+    curr_pose_rel = [lead_pose[0]-curr_pose_chase[0], lead_pose[1]-curr_pose_chase[1], lead_pose[2]-curr_pose_chase[2]]
+    print("relative pose",curr_pose_rel)
+    count += 1
+
+    # plan trajectory to reach lead
+    client.moveToPositionAsync(lead_pose[0],lead_pose[1],lead_pose[2],2,vehicle_name=chase)
+    # start_state = [curr_pose_chase[0],curr_pose_chase[1],curr_pose_chase[2],         0,0,0,   0,0,0]
+    # goal_state =  [curr_pose_chase[0]+curr_pose_rel[0],curr_pose_chase[1]+curr_pose_rel[1],curr_pose_chase[2]-curr_pose_rel[2],   0,0,0,   0,9.81,0]
+
+    # print("$$$$$$$$$$$$$start state",start_state)
+    # print("$$$$$$$$$$$$$goal state",goal_state)
+    # d1 = Generate()
+    # position, velocity = d1.generate_traj(starting_state=start_state, goal_state=goal_state, Tf = dt_move, vis=False)
+    # x = position[:,0]
+    # y = position[:,1]
+    # z = position[:,2]
+    # vx = velocity[:,0]
+    # vy = velocity[:,1]
+    # vz = velocity[:,2]
+
+    # # execute movement
+    # dt = dt_move/len(vx)
+    # for i in range(len(vx)):
+    #     client.moveByVelocityAsync(vx[i],vy[i],vz[i],dt,vehicle_name=chase).join()
+    #     # time.sleep(2)
+
+    if count == 100:
+        break
+
+
+
+
+
+# # client.moveToZAsync(10,2, vehicle_name=chase).join()
+# curr_state = client.simGetVehiclePose(chase)
+# print("chase state", curr_state)
+
+
+
 
 # # Async methods returns Future. Call join() to wait for task to complete.
 # client.takeoffAsync().join()
@@ -89,3 +134,8 @@ print("lead state", curr_state)
 
 
 print("Finished")
+# client.reset()
+client.armDisarm(False)
+
+# that's enough fun for now. let's quit cleanly
+client.enableApiControl(False)

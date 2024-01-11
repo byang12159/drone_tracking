@@ -61,12 +61,12 @@ class Generate:
         floorNormal = [0,0,1]  # we want to be in this direction of the point (upwards)
         positionFeasible = traj.check_position_feasibility(floorPoint, floorNormal)
         
-        for i in range(3):
-            print("Axis #" , i)
-            print("\talpha = " ,traj.get_param_alpha(i), "\tbeta = "  ,traj.get_param_beta(i), "\tgamma = " ,traj.get_param_gamma(i))
-        print("Total cost = " , traj.get_cost())
-        print("Input feasibility result: ",    quadtraj.InputFeasibilityResult.to_string(inputsFeasible),   "(", inputsFeasible, ")")
-        print("Position feasibility result: ", quadtraj.StateFeasibilityResult.to_string(positionFeasible), "(", positionFeasible, ")")
+        # for i in range(3):
+        #     print("Axis #" , i)
+        #     print("\talpha = " ,traj.get_param_alpha(i), "\tbeta = "  ,traj.get_param_beta(i), "\tgamma = " ,traj.get_param_gamma(i))
+        # print("Total cost = " , traj.get_cost())
+        # print("Input feasibility result: ",    quadtraj.InputFeasibilityResult.to_string(inputsFeasible),   "(", inputsFeasible, ")")
+        # print("Position feasibility result: ", quadtraj.StateFeasibilityResult.to_string(positionFeasible), "(", positionFeasible, ")")
 
         numPlotPoints = 100
         time = np.linspace(0, Tf, numPlotPoints)

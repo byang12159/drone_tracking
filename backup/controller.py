@@ -1,5 +1,5 @@
-import dynamics3
-from dynamics3 import g, A, B, kT
+import backup.dynamics3 as dynamics3
+from backup.dynamics3 import g, A, B, kT
 import numpy as np
 import scipy
 from scipy.integrate import odeint
