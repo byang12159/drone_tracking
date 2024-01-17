@@ -45,7 +45,7 @@ print("Finished")
 #get segmentation image in various formats
 responses = client.simGetImages([
     airsim.ImageRequest("0", airsim.ImageType.Segmentation, True), #depth in perspective projection
-    airsim.ImageRequest("0", airsim.ImageType.Segmentation, False, False)])  #scene vision image in uncompressed RGBA array
+    airsim.ImageRequest("0", airsim.ImageType.Segmentation, False, True)])  #scene vision image in uncompressed RGBA array
 print('Retrieved images: %d', len(responses))
 
 #save segmentation images in various formats
@@ -64,7 +64,8 @@ for idx, response in enumerate(responses):
         img_rgb = img1d.reshape(response.height, response.width, 3) #reshape array to 3 channel image array H X W X 3
         cv2.imwrite(os.path.normpath("segment3"+ '.png'), img_rgb) # write to png
 
-        #find unique colors
-        print(np.unique(img_rgb[:,:,0], return_counts=True)) #red
-        print(np.unique(img_rgb[:,:,1], return_counts=True)) #green
-        print(np.unique(img_rgb[:,:,2], return_counts=True)) #blue  
+        # #find unique colors
+        # print(np.unique(img_rgb[:,:,0], return_counts=True)) #red
+        # print(np.unique(img_rgb[:,:,1], return_counts=True)) #green
+        # print(np.unique(img_rgb[:,:,2], return_counts=True)) #blue  
+return img_rgb
