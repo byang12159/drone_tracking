@@ -232,23 +232,19 @@ if __name__ == "__main__":
     PF_pose_est_history_z = []
 
     state_history = []
-    for i in range(300):
-        est_state = mcl.rgb_run(i)  
+    for i in range(30):
 
-        PF_pose_est_history_x.append(est_state[0,3])
-        PF_pose_est_history_y.append(est_state[1,3])
-        PF_pose_est_history_z.append(est_state[2,3])
 
         est_state_full = np.array([
-            est_state[0,3],
+            drone_agent.ref_traj_discrete[i,0],
             state[1],
             0,
             state[3],
-            est_state[1,3],
+            drone_agent.ref_traj_discrete[i,1],
             state[5],
             0,
             state[7],
-            est_state[2,3],
+            drone_agent.ref_traj_discrete[i,2],
             state[9],
             0,
             state[11],
@@ -259,15 +255,18 @@ if __name__ == "__main__":
         trace = drone_agent.TC_simulate(init, time_horizon=0.1, time_step=0.01)
         state = trace[-1,1:13]
         ref = trace[-1, 25:]
-        # state_history.append(state)
+        
         lstate = trace[-1,1:]
         ltime = i*0.1
         lstate = np.insert(lstate, 0, ltime).reshape((1,-1))
         traj = np.vstack((traj,lstate))
+
+        state_history.append(state)
+        # mcl.rgb_run()
         print("I",i)
     
 
-
+    state_history = np.array(state_history)
     fig = plt.figure(1)
     ax = fig.add_subplot(111, projection='3d')
 
@@ -276,62 +275,64 @@ if __name__ == "__main__":
     y = drone_agent.ref_traj[1](t)
     z = drone_agent.ref_traj[2](t)
     ax.plot(x, y, z, color='b')
-
-    ax.plot(PF_pose_est_history_x,PF_pose_est_history_y,PF_pose_est_history_z, 'o',color='g')
-
-    plt.figure(1)
-    # ax.plot(x,y,z, color = 'b')
-    ax.plot(traj[:,1], traj[:,5], traj[:,9], color = 'r')
-    yaw_ref = []
-    yaw_act = []
-    for i in range(len(traj)):
-        x, y, z = traj[i, 1], traj[i, 5], traj[i, 9]
-        yaw = traj[i, 11]
-        offset_x = 0.1*np.cos(yaw)
-        offset_y = 0.1*np.sin(yaw)
-        plt.figure(1)
-        ax.plot([x, x+offset_x], [y, y+offset_y], [z, z], 'g')
-        yaw_act.append(yaw)
-
-        t = traj[i, 25]
-        x = drone_agent.ref_traj[0](t)
-        y = drone_agent.ref_traj[1](t)
-        z = drone_agent.ref_traj[2](t)
-
-        xn = drone_agent.ref_traj[0](t+0.01)
-        yn = drone_agent.ref_traj[1](t+0.01)
-        yaw = np.arctan2(yn-y, xn-x)
-        yaw = yaw%(np.pi*2)
-        if yaw > np.pi/2:
-            yaw -= 2*np.pi
-
-        yaw_ref.append(yaw)
-        offset_x = 0.1*np.cos(yaw)
-        offset_y = 0.1*np.sin(yaw)
-        plt.figure(1)
-        ax.plot([x, x+offset_x], [y, y+offset_y], [z, z], 'r')
-        ax.scatter([x],[y],[z],color = 'm')
-    ax.set_xlabel('x')
-    ax.set_ylabel('y')
-    ax.set_zlabel('z')
-
-    # plt.figure(2)
-    # plt.plot(traj[1:,15], label='est')
-    # plt.plot(traj[:-1,3], label='act')
-    # plt.title('roll')
-    # plt.legend()
-
-    # plt.figure(3)
-    # plt.plot(traj[1:,19], label='est')
-    # plt.plot(traj[:-1,7], label='act')
-    # plt.title('pitch')
-    # plt.legend()
-
-    # plt.figure(4)
-    # plt.plot(traj[1:,23], label='est')
-    # plt.plot(traj[:-1,11], label='act')
-    # plt.title('yaw')
-    # plt.legend()
-
+    ax.plot(state_history[:,0], state_history[:,4], state_history[:,8], color='r')
     plt.show()
 
+
+
+    # plt.figure(1)
+    # # ax.plot(x,y,z, color = 'b')
+    # # ax.plot(traj[:,1], traj[:,5], traj[:,9], color = 'r')
+    # yaw_ref = []
+    # yaw_act = []
+    # for i in range(len(traj)):
+    #     x, y, z = traj[i, 1], traj[i, 5], traj[i, 9]
+    #     yaw = traj[i, 11]
+    #     offset_x = 0.1*np.cos(yaw)
+    #     offset_y = 0.1*np.sin(yaw)
+    #     plt.figure(1)
+    #     # ax.plot([x, x+offset_x], [y, y+offset_y], [z, z], 'g')
+    #     yaw_act.append(yaw)
+
+    #     t = traj[i, 25]
+    #     x = drone_agent.ref_traj[0](t)
+    #     y = drone_agent.ref_traj[1](t)
+    #     z = drone_agent.ref_traj[2](t)
+
+    #     xn = drone_agent.ref_traj[0](t+0.01)
+    #     yn = drone_agent.ref_traj[1](t+0.01)
+    #     yaw = np.arctan2(yn-y, xn-x)
+    #     yaw = yaw%(np.pi*2)
+    #     if yaw > np.pi/2:
+    #         yaw -= 2*np.piq
+
+    #     yaw_ref.append(yaw)
+    #     offset_x = 0.1*np.cos(yaw)
+    #     offset_y = 0.1*np.sin(yaw)
+    #     plt.figure(1)
+    #     ax.plot([x, x+offset_x], [y, y+offset_y], [z, z], 'teal')
+    #     # ax.scatter([x],[y],[z],color = 'm')
+    # ax.set_xlabel('x')
+    # ax.set_ylabel('y')
+    # ax.set_zlabel('z')
+    # # ax.legend()
+
+    # # plt.figure(2)
+    # # plt.plot(traj[1:,15], label='est')
+    # # plt.plot(traj[:-1,3], label='act')
+    # # plt.title('roll')
+    # # plt.legend()
+
+    # # plt.figure(3)
+    # # plt.plot(traj[1:,19], label='est')
+    # # plt.plot(traj[:-1,7], label='act')
+    # # plt.title('pitch')
+    # # plt.legend()
+
+    # # plt.figure(4)
+    # # plt.plot(traj[1:,23], label='est')
+    # # plt.plot(traj[:-1,11], label='act')
+    # # plt.title('yaw')
+    # # plt.legend()
+
+    # plt.show()

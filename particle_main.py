@@ -1,12 +1,15 @@
 import numpy as np
+import scipy
 import cv2
 import time
+from numpy import cos, sin
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 import json
 from particle_filter import ParticleFilter
 # from controller import Controller
 from scipy.spatial.transform import Rotation as R
+from scipy.integrate import odeint
 import os
 import torch 
 from scipy.interpolate import UnivariateSpline
@@ -17,8 +20,49 @@ from torchvision.utils import save_image
 from scipy.spatial.transform import Rotation
 import copy
 
+# quadrotor physical constants
+g = 9.81; d0 = 10; d1 = 8; n0 = 10; kT = 0.91
 
-class DroneAgent():
+# non-linear dynamics
+def dynamics(state, u):
+    x, vx, theta_x, omega_x, y, vy, theta_y, omega_y, z, vz, theta_z, omega_z = state.reshape(-1).tolist()
+    ax, ay, F, az = u.reshape(-1).tolist()
+    dot_x = np.array([
+     cos(theta_z)*vx-sin(theta_z)*vy,
+     g * np.tan(theta_x),
+     -d1 * theta_x + omega_x,
+     -d0 * theta_x + n0 * ax,
+     sin(theta_z)*vx+cos(theta_z)*vy,
+     g * np.tan(theta_y),
+     -d1 * theta_y + omega_y,
+     -d0 * theta_y + n0 * ay,
+     vz,
+     kT * F - g,
+     omega_z,
+     n0 * az])
+    return dot_x
+
+# linearization
+# The state variables are x, y, z, vx, vy, vz, theta_x, theta_y, omega_x, omega_y
+A = np.zeros([10, 10])
+A[0, 1] = 1.
+A[1, 2] = g
+A[2, 2] = -d1
+A[2, 3] = 1
+A[3, 2] = -d0
+A[4, 5] = 1.
+A[5, 6] = g
+A[6, 6] = -d1
+A[6, 7] = 1
+A[7, 6] = -d0
+A[8, 9] = 1.
+
+B = np.zeros([10, 3])
+B[3, 0] = n0
+B[7, 1] = n0
+B[9, 2] = kT
+
+class RunParticle():
     def __init__(self, trajectory, width=320, height=320, fov=50, batch_size=32):
 
         ####################### Import camera path trajectory json #######################
@@ -38,7 +82,7 @@ class DroneAgent():
         # [x y z]
         self.ref_traj = np.array([list(self.ref_traj_spline[0](t)), list(self.ref_traj_spline[1](t)), list(self.ref_traj_spline[2](t))]).T
 
-        self.ref_traj *= 10
+        # self.ref_traj *= 10
 
         ## ADD: decoupled YAW control
 
@@ -89,6 +133,36 @@ class DroneAgent():
         pose_est[:3, :3] = rot_est  # Set the upper-left 3x3 submatrix as the rotation matrix
         pose_est[:3, 3] = position_est  # Set the rightmost column as the translation vector
         self.all_pose_est.append(pose_est)
+
+        def lqr(A, B, Q, R):
+            """Solve the continuous time lqr controller.
+            dx/dt = A x + B u
+            cost = integral x.T*Q*x + u.T*R*u
+            """
+            # http://www.mwm.im/lqr-controllers-with-python/
+            # ref Bertsekas, p.151
+
+            # first, try to solve the ricatti equation
+            X = np.matrix(scipy.linalg.solve_continuous_are(A, B, Q, R))
+
+            # compute the LQR gain
+            K = np.matrix(scipy.linalg.inv(R) * (B.T * X))
+
+            eigVals, eigVecs = scipy.linalg.eig(A - B * K)
+
+            return np.asarray(K), np.asarray(X), np.asarray(eigVals)
+        
+        ####################### solve LQR #######################
+        n = A.shape[0]
+        m = B.shape[1]
+        Q = np.eye(n)
+        Q[0, 0] = 10.
+        Q[1, 1] = 10.
+        Q[2, 2] = 10.
+        # Q[11,11] = 0.01
+        R = np.diag([1., 1., 1.])
+        self.K, _, _ = lqr(A, B, Q, R)
+
 
     def mat3d(self, x,y,z):
         # Create a 3D figure
@@ -154,8 +228,39 @@ class DroneAgent():
             
         return  {'position':initial_positions, 'rotation':initial_rotations}
 
-    
+    def u(self, x, goal):
+        yaw = x[10]
+        err = [goal[0],0,0,0, goal[1],0,0,0, goal[2],0] - x[:10]
+        err_pos = err[[0,4,8]]
 
+        err_pos = np.linalg.inv(np.array([
+            [np.cos(yaw), -np.sin(yaw), 0],
+            [np.sin(yaw), np.cos(yaw), 0],
+            [0,0,1]
+        ]))@err_pos
+
+        err[[0,4,8]] = err_pos
+        u_pos = self.K.dot(err) + [0, 0, g / kT]
+        u_ori = (goal[3]-yaw)*1+(0-x[11])*1.0
+        if abs(goal[3]-yaw)>1:
+            print('stop')
+        return np.concatenate((u_pos, [u_ori]))
+    
+    ######################## The closed_loop system #######################
+    def cl_nonlinear(self, x, t, x_est, goal):
+        x = np.array(x)
+        dot_x = dynamics(x, self.u(x_est, goal))
+        return dot_x
+
+    # simulate
+    def simulate(self, x, x_est, goal, dt):
+        curr_position = np.array(x)[[0, 4, 8]]
+        goal_pos = goal[:3]
+        error = goal_pos - curr_position
+        distance = np.sqrt((error**2).sum())
+        if distance > 1:
+            goal[:3] = curr_position + error / distance
+        return odeint(self.cl_nonlinear, x, [0, dt], args=(x_est, goal,))[-1]
     def move(self, x0=np.zeros(12), goal=np.zeros(12), dt=0.1):
         # integrate dynamics
         movement = self.control.simulate(x0, goal, dt)
@@ -197,9 +302,9 @@ class DroneAgent():
             # prot = R.from_euler('xyz',peul)
             # self.filter.particles['rotation'][i] = prot
         
-        print("Finish odometry update")
+        # print("Finish odometry update")
     
-    def get_loss(self, current_pose, particle_poses, iter):
+    def get_loss(self, current_pose, particle_poses):
         losses = []
 
         start_time = time.time()
@@ -212,8 +317,7 @@ class DroneAgent():
                    
         return losses, nerf_time
 
-    def rgb_run(self,iter):
-        print("processing image")
+    def rgb_run(self,current_pose):
         start_time = time.time()
         self.rgb_input_count += 1
 
@@ -226,10 +330,9 @@ class DroneAgent():
         # if self.sampling_strategy == 'random':
         # From the meshgrid of image, find Batch# of points to randomly sample and compare, list of 2d coordinatesg
 
-        current_pose = self.ref_traj[iter]
-        losses, nerf_time = self.get_loss(current_pose, particles_position_before_update, iter=iter)
-        print("Pass losses")
-        # print(losses)
+
+        losses, nerf_time = self.get_loss(current_pose, particles_position_before_update)
+
         temp = 1
         for index, particle in enumerate(particles_position_before_update):
             self.filter.weights[index] = 1/(losses[index]+temp)
@@ -248,9 +351,9 @@ class DroneAgent():
         self.all_pose_est.append(pose_est)
         
         # Update odometry step
-        current_state = self.ref_traj[iter]
-        next_state = self.ref_traj[iter+1]
-        self.odometry_update(current_state,next_state)
+        # current_state = self.ref_traj[iter]
+        # next_state = self.ref_traj[iter+1]
+        # self.odometry_update(current_state,next_state)
         # self.publish_pose_est(pose_est)
 
 
@@ -259,40 +362,64 @@ class DroneAgent():
 
         return pose_est
     
-    def TC_simulate(self, initial_condition, time_horizon, time_step, lane_map = None):
-        time_steps = np.arange(0, time_horizon+time_step/2, time_step)
+    # def step(self, cur_state_estimated, initial_condition, time_step, goal_state):
+    #     goal_pos = [
+    #         self.ref_traj_spline[0](goal_state[0]),
+    #         self.ref_traj_spline[1](goal_state[0]),
+    #         self.ref_traj_spline[2](goal_state[0]),
+    #     ]
+    #     goal_yaw = np.arctan2(
+    #         self.ref_traj_spline[1](goal_state[0]+0.001)-self.ref_traj_spline[1](goal_state[0]),
+    #         self.ref_traj_spline[0](goal_state[0]+0.001)-self.ref_traj_spline[0](goal_state[0])
+    #     ) 
+    #     goal_yaw = goal_yaw%(np.pi*2)
+    #     if goal_yaw > np.pi/2:
+    #         goal_yaw -= 2*np.pi
+    #     goal = goal_pos + [goal_yaw]
+    #     sol = self.simulate(initial_condition, cur_state_estimated, goal, time_step)
+    #     self.last_ref_yaw = goal_yaw
+    #     return sol
+    
+    # def run_ref(self, ref_state, time_step):
+    #     ref_pos = ref_state[0]
+    #     ref_v = ref_state[1]
+    #     return np.array([ref_pos+ref_v*time_step, ref_v])
+    
 
-        state = np.array(initial_condition)
-        trajectory = copy.deepcopy(state)
-        trajectory = np.insert(trajectory, 0, time_steps[0])
-        trajectory = np.reshape(trajectory, (1, -1))
-        for i in range(1, len(time_steps)):
-            x_ground_truth = state[:12]
-            x_estimate = state[12:24]
-            ref_state = state[24:]
-            x_next = self.step(x_estimate, x_ground_truth, time_step, ref_state)
-            x_next[10] = x_next[10]%(np.pi*2)
-            if x_next[10] > np.pi/2:
-                x_next[10] = x_next[10]-np.pi*2
-            ref_next = self.run_ref(ref_state, time_step)
-            state = np.concatenate((x_next, x_estimate, ref_next))
-            tmp = np.insert(state, 0, time_steps[i])
-            tmp = np.reshape(tmp, (1,-1))
-            trajectory = np.vstack((trajectory, tmp))
+    # def TC_simulate(self, initial_condition, time_horizon, time_step):
+    #     time_steps = np.arange(0, time_horizon+time_step/2, time_step)
 
-        return trajectory
+    #     state = np.array(initial_condition)
+    #     trajectory = copy.deepcopy(state)
+    #     trajectory = np.insert(trajectory, 0, time_steps[0])
+    #     trajectory = np.reshape(trajectory, (1, -1))
+    #     for i in range(1, len(time_steps)):
+    #         x_ground_truth = state[:12]
+    #         x_estimate = state[12:24]
+    #         ref_state = state[24:]
+    #         x_next = self.step(x_estimate, x_ground_truth, time_step, ref_state)
+    #         x_next[10] = x_next[10]%(np.pi*2)
+    #         if x_next[10] > np.pi/2:
+    #             x_next[10] = x_next[10]-np.pi*2
+    #         ref_next = self.run_ref(ref_state, time_step)
+    #         state = np.concatenate((x_next, x_estimate, ref_next))
+    #         tmp = np.insert(state, 0, time_steps[i])
+    #         tmp = np.reshape(tmp, (1,-1))
+    #         trajectory = np.vstack((trajectory, tmp))
+
+    #     return trajectory
 
 
 
 if __name__ == "__main__":
 
-    drone = DroneAgent(trajectory="camera_path_spline.json")    
+    mcl = RunParticle(trajectory="camera_path_spline.json")    
 
  
-    # Initialize Drone Position
-    est_states = np.zeros((len(drone.ref_traj) ,3))
-    gt_states  = np.zeros((len(drone.ref_traj) ,16))
-    iteration_count = np.arange(0,len(drone.ref_traj) , 1, dtype=int)
+    # Initialize mcl Position
+    est_states = np.zeros((len(mcl.ref_traj) ,3))
+    gt_states  = np.zeros((len(mcl.ref_traj) ,16))
+    iteration_count = np.arange(0,len(mcl.ref_traj) , 1, dtype=int)
 
     start_time = time.time()
 
@@ -302,21 +429,52 @@ if __name__ == "__main__":
     PF_history_x = []
     PF_history_y = []
     PF_history_z = []
+
+    # cam_init = np.array([[0,0,0,mcl.ref_traj[0][0]],
+    #                      [0,0,0,mcl.ref_traj[0][1]],
+    #                      [0,0,0,mcl.ref_traj[0][2]]])
+    
+    # cam_init_pos = cam_init[0:3, 3]
+    # cam_rpy = R.from_matrix(cam_init[0:3, 0:3]).as_euler('xyz')
+    # drone_init = np.array([
+    #     cam_init_pos[0], 0, cam_rpy[0]-np.pi/2, 0, 
+    #     cam_init_pos[1], 0, cam_rpy[1], 0, 
+    #     cam_init_pos[2], 0, cam_rpy[2]+np.pi/2, 0, 
+    # ])
+
+    # ref_init = np.array([0,1])
+
+    # state = drone_init 
+    # ref = ref_init 
+    # traj = np.concatenate(([0], drone_init, drone_init, ref_init)).reshape((1,-1))
+    
+
     # Assume constant time step between trajectory stepping
     for iter in range(500):
-        state_now = drone.ref_traj[iter]
-        state_future = drone.ref_traj[iter+1]
-        i = state_now
-        future = state_future
         
-        pose_est = drone.rgb_run(iter)   
+        # init = np.concatenate((state, state, ref))
+        # trace = mcl.TC_simulate(init, time_horizon=0.1, time_step=0.01)
+        # state = trace[-1,1:13]
+        # ref = trace[-1, 25:]
+        # lstate = trace[-1,1:]
+        # ltime = iter*0.1
+        # lstate = np.insert(lstate, 0, ltime).reshape((1,-1))
+        # traj = np.vstack((traj,lstate))
+
+
+        # state_now = mcl.ref_traj[iter]
+        # state_future = mcl.ref_traj[iter+1]
+        # i = state_now
+        # future = state_future
+        
+        pose_est = mcl.rgb_run(current_pose= mcl.ref_traj[iter])   
         pose_est_history_x.append(pose_est[0,3])
         pose_est_history_y.append(pose_est[1,3])
         pose_est_history_z.append(pose_est[2,3])
 
-        PF_history_x.append(np.array(drone.filter.particles['position'][:,0]).flatten())
-        PF_history_y.append(np.array(drone.filter.particles['position'][:,1]).flatten())
-        PF_history_z.append(np.array(drone.filter.particles['position'][:,2]).flatten())
+        PF_history_x.append(np.array(mcl.filter.particles['position'][:,0]).flatten())
+        PF_history_y.append(np.array(mcl.filter.particles['position'][:,1]).flatten())
+        PF_history_z.append(np.array(mcl.filter.particles['position'][:,2]).flatten())
     
     PF_history_x = np.array(PF_history_x)
     PF_history_y = np.array(PF_history_y)
@@ -327,9 +485,9 @@ if __name__ == "__main__":
     ax = fig.add_subplot(111, projection='3d')
     # ax.plot(x, y, z, color='b')
     t = np.linspace(0, 32, 1000)
-    x = drone.ref_traj[:,0]
-    y = drone.ref_traj[:,1]
-    z = drone.ref_traj[:,2]
+    x = mcl.ref_traj[:,0]
+    y = mcl.ref_traj[:,1]
+    z = mcl.ref_traj[:,2]
     plt.figure(1)
     ax.plot(x,y,z, color = 'b')
     ax.plot(pose_est_history_x,pose_est_history_y,pose_est_history_z, color = 'g')
@@ -359,7 +517,7 @@ if __name__ == "__main__":
                                 lambda event: [exit(0) if event.key == 'escape' else None])
 
             # Plot the trajectory up to the current count in 3D
-            ax.plot(drone.ref_traj[:count, 0], drone.ref_traj[:count, 1], drone.ref_traj[:count, 2], "*k")
+            ax.plot(mcl.ref_traj[:count, 0], mcl.ref_traj[:count, 1], mcl.ref_traj[:count, 2], "*k")
             ax.plot(pose_est_history_x[count], pose_est_history_y[count], pose_est_history_z[count], "*r" )
             # ax.plot(PF_history_x[count],PF_history_y[count],PF_history_y[count], 'o',color='blue', alpha=0.5)
             # Additional plotting commands can be added here
