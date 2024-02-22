@@ -72,70 +72,93 @@ class ParticleFilter:
         self.weights=self.weights / sum_weights
     
         #resample
-        choice = np.random.choice(self.num_particles, self.num_particles, p = self.weights, replace=True)
-        # Add some noise 
-        noise_level = 0.5
-        outlier_level = 0.2
-        random_noise = np.random.uniform(-noise_level, noise_level, size=(290, 3)) 
-        outlier_noise = np.random.uniform(-outlier_level, outlier_level, size=(10, 3)) 
-        total_noise = np.vstack((random_noise,outlier_noise))
-        temp = {'position':np.copy(self.particles['position'])[choice, :]+total_noise, 'velocity':np.copy(self.particles['velocity'])[choice,:]}
+
+        out = int(0.5*self.num_particles) # Number of outlier particles chosen
+        # choice = np.random.choice(self.num_particles, self.num_particles-out, p = self.weights, replace=True)
+        choice = np.random.choice(self.num_particles, self.num_particles-out, p = self.weights, replace=True)
+        temp = {'position':np.copy(self.particles['position'])[choice, :], 'rotation':np.copy(self.particles['rotation'])[choice]}
+
+        pos_est = self.compute_simple_position_average()
+        rot_est = self.compute_simple_rotation_average()
+        # Add some particles spread 
+        for i in range(out):
+            resample_particle_noise_translation = np.random.uniform(-0.05, 0.05,3)
+            resample_particle_noise_rotation = np.random.normal(-0.05, 0.05,3)
+            temp['position'] = np.concatenate((temp['position'],(pos_est + resample_particle_noise_translation).reshape((1,-1))),axis=0)
+            temp['rotation'] = np.append(temp['rotation'],R.from_euler('xyz', R.from_quat(rot_est).as_euler('xyz')+resample_particle_noise_rotation))
 
         self.particles = temp
 
-    def update_vel(self, current_state_observe, timestep):
-
-        for i in range(self.num_particles):
-            est_particle_velocity = (current_state_observe-self.particles['position'][i]) / timestep
-            self.particles['velocity'][i] = est_particle_velocity
 
     def compute_simple_position_average(self):
         # Simple averaging does not use weighted average or k means.
         avg_pose = np.average(self.particles['position'], axis=0)
         return avg_pose
-    
-    def compute_simple_velocity_average(self):
-        # Simple averaging does not use weighted average or k means.
-        avg_velocity = np.average(self.particles['velocity'], axis=0)
-        return avg_velocity
 
     def compute_weighted_position_average(self):
+        # print("weights",self.weights)
         avg_pose = np.average(self.particles['position'], weights=self.weights, axis=0)
         return avg_pose
     
     def compute_weighted_velocity_average(self):
-        avg_velocity = np.average(self.particles['velocity'], weights=self.weights, axis=0)
+        avg_velocity = np.average(self.particles['rotation'], weights=self.weights, axis=0)
         return avg_velocity
     
     def compute_simple_rotation_average(self):
         # Simple averaging does not use weighted average or k means.
         # https://users.cecs.anu.edu.au/~hartley/Papers/PDF/Hartley-Trumpf:Rotation-averaging:IJCV.pdf section 5.3 Algorithm 1
-        
-        epsilon = 0.00001
-        max_iters = 10
         rotations = self.particles['rotation']
 
-        R = rotations[0].as_matrix()
-        for i in range(max_iters):
-            rot_sum = np.zeros((3))
-            for rot in rotations:
-                rot_sum = rot_sum  + logm(R.T @ rot.as_matrix())
-
-            r = rot_sum / len(rotations)
-            if np.linalg.norm(r) < epsilon:
-                # print("rotation averaging converged at iteration: ", i)
-                # print("average rotation: ", R)
-                return R
-            else:
-                # TODO do the matrix math in gtsam to avoid all the type casting
-                R = R @ expm(r)
-
-    def odometry_update(self,curr_state_est):
-        system_time_interval = 0.001
-        offset = system_time_interval*curr_state_est[3:]
-
+        quaternion = np.zeros((self.num_particles,4))
         for i in range(self.num_particles):
-            self.particles['position'][i] += offset
-            self.particles['velocity'][i] +=0
+            quaternion[i] = rotations[i].as_quat()
+
+        weights = np.ones(self.num_particles)
+        #Using multiple quaternion average technique https://stackoverflow.com/questions/12374087/average-of-multiple-quaternions
+        avg_quat = np.linalg.eigh(np.einsum('ij,ik,i->...jk', quaternion, quaternion, weights))[1][:, -1]
+        return avg_quat
+
+        # total_quat = np.zeros(4)
+        # for i in range(self.num_particles):
+        #     total_quat += rotations[i].as_quat()
         
-        print("Finish odometry update")
+        # avg_quat = total_quat/self.num_particles
+
+        # # Ensure the differences are within the range of -pi to pi
+        # yaw_diff = (yaw_diff + np.pi) % (2 * np.pi) - np.pi
+        # pitch_diff = (pitch_diff + np.pi) % (2 * np.pi) - np.pi
+        # roll_diff = (roll_diff + np.pi) % (2 * np.pi) - np.pi
+
+        # return [yaw_diff, pitch_diff, roll_diff]
+        # rotobj = R.from_quat(avg_quat)
+        
+        # return rotation object
+        # return rotobj
+
+        # epsilon = 0.00001
+        # max_iters = 10
+        # rotations = self.particles['rotation']
+
+        # R = rotations[0].as_matrix()
+        # for i in range(max_iters):
+        #     rot_sum = np.zeros((3))
+        #     for rot in rotations:
+        #         rot_sum = rot_sum  + logm(R.T @ rot.as_matrix())
+
+        #     r = rot_sum / len(rotations)
+        #     if np.linalg.norm(r) < epsilon:
+        #         # print("rotation averaging converged at iteration: ", i)
+        #         # print("average rotation: ", R)
+        #         return R
+        #     else:
+        #         # TODO do the matrix math in gtsam to avoid all the type casting
+        #         R = R @ expm(r)
+
+    # def odometry_update(self,state_difference):
+    #     for i in range(self.num_particles):
+    #         self.particles['position'][i] += [state_difference[3], state_difference[7], state_difference[11]]
+
+    #         diff_rotation = R.from_matrix(self.cam_states[i].reshape(4,4)[0:3,0:3])
+    #         self.particles['rotation'][i] *= diff_rotation
+        
+    #     print("Finish odometry update")

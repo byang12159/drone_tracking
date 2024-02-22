@@ -20,48 +20,6 @@ from torchvision.utils import save_image
 from scipy.spatial.transform import Rotation
 import copy
 
-# quadrotor physical constants
-g = 9.81; d0 = 10; d1 = 8; n0 = 10; kT = 0.91
-
-# non-linear dynamics
-def dynamics(state, u):
-    x, vx, theta_x, omega_x, y, vy, theta_y, omega_y, z, vz, theta_z, omega_z = state.reshape(-1).tolist()
-    ax, ay, F, az = u.reshape(-1).tolist()
-    dot_x = np.array([
-     cos(theta_z)*vx-sin(theta_z)*vy,
-     g * np.tan(theta_x),
-     -d1 * theta_x + omega_x,
-     -d0 * theta_x + n0 * ax,
-     sin(theta_z)*vx+cos(theta_z)*vy,
-     g * np.tan(theta_y),
-     -d1 * theta_y + omega_y,
-     -d0 * theta_y + n0 * ay,
-     vz,
-     kT * F - g,
-     omega_z,
-     n0 * az])
-    return dot_x
-
-# linearization
-# The state variables are x, y, z, vx, vy, vz, theta_x, theta_y, omega_x, omega_y
-A = np.zeros([10, 10])
-A[0, 1] = 1.
-A[1, 2] = g
-A[2, 2] = -d1
-A[2, 3] = 1
-A[3, 2] = -d0
-A[4, 5] = 1.
-A[5, 6] = g
-A[6, 6] = -d1
-A[6, 7] = 1
-A[7, 6] = -d0
-A[8, 9] = 1.
-
-B = np.zeros([10, 3])
-B[3, 0] = n0
-B[7, 1] = n0
-B[9, 2] = kT
-
 class RunParticle():
     def __init__(self, trajectory, width=320, height=320, fov=50, batch_size=32):
 
@@ -79,13 +37,13 @@ class RunParticle():
 
         self.ref_traj_spline = [spline_x, spline_y, spline_z]
         t = np.linspace(0, 32, 1000)
+
+        initialize_velocity_vector = np.zeros((1000,3))
         # [x y z]
         self.ref_traj = np.array([list(self.ref_traj_spline[0](t)), list(self.ref_traj_spline[1](t)), list(self.ref_traj_spline[2](t))]).T
-
-        # self.ref_traj *= 10
-
-        ## ADD: decoupled YAW control
-
+        # [x y z vx vy vz]
+        # self.ref_traj = np.hstack((self.ref_traj,initialize_velocity_vector))
+        # print(self.ref_traj.shape)
   
         # fig = plt.figure(1)
         # ax = fig.add_subplot(111, projection='3d')
@@ -100,25 +58,20 @@ class RunParticle():
 
         ####################### Initialize Variables #######################
 
+        self.format_particle_size = 0
         # bounds for particle initialization, meters + degrees
-        self.min_bounds = {'px':-0.5,'py':-0.5,'pz':-0.5,'rz':-2.5,'ry':-179.0,'rx':-2.5}
-        self.max_bounds = {'px':0.5,'py':0.5,'pz':0.5,'rz':2.5,'ry':179.0,'rx':2.5}
+        self.num_particle_states = 6
+        self.min_bounds = {'px':-0.5,'py':-0.5,'pz':-0.5,'rz':-2.5,'ry':-179.0,'rx':-2.5,'pVx':-0.5,'pVy':-0.5,'pVz':-0.5}
+        self.max_bounds = {'px':0.5,'py':0.5,'pz':0.5,'rz':2.5,'ry':179.0,'rx':2.5,      'pVx':0.5, 'pVy':0.5, 'pVz':0.5}
 
         self.num_particles = 300
         
-        self.obs_img_pose = None
-        self.center_about_true_pose = False
-        self.all_pose_est = []
-        
-        self.rgb_input_count = 0
+        self.state_est_history = []
 
         self.use_convergence_protection = True
         self.convergence_noise = 0.2
 
-        self.number_convergence_particles = 10 #number of particles to distribute
-
         self.sampling_strategy = 'random'
-        self.photometric_loss = 'rgb'
         self.num_updates =0
         # self.control = Controller()
 
@@ -126,42 +79,13 @@ class RunParticle():
         self.get_initial_distribution()
 
         # add initial pose estimate before 1st update step
-        position_est = self.filter.compute_weighted_position_average()
-        rot_est = np.eye(3)
-        # rot_est = self.filter.compute_simple_rotation_average()
-        pose_est = np.eye(4)  # Initialize as identity matrix
-        pose_est[:3, :3] = rot_est  # Set the upper-left 3x3 submatrix as the rotation matrix
-        pose_est[:3, 3] = position_est  # Set the rightmost column as the translation vector
-        self.all_pose_est.append(pose_est)
+        position_est = self.filter.compute_simple_position_average()
+        velocity_est = self.filter.compute_simple_velocity_average()
+        state_est = np.concatenate((position_est, velocity_est))
 
-        def lqr(A, B, Q, R):
-            """Solve the continuous time lqr controller.
-            dx/dt = A x + B u
-            cost = integral x.T*Q*x + u.T*R*u
-            """
-            # http://www.mwm.im/lqr-controllers-with-python/
-            # ref Bertsekas, p.151
+        self.state_est_history.append(state_est)
 
-            # first, try to solve the ricatti equation
-            X = np.matrix(scipy.linalg.solve_continuous_are(A, B, Q, R))
-
-            # compute the LQR gain
-            K = np.matrix(scipy.linalg.inv(R) * (B.T * X))
-
-            eigVals, eigVecs = scipy.linalg.eig(A - B * K)
-
-            return np.asarray(K), np.asarray(X), np.asarray(eigVals)
-        
-        ####################### solve LQR #######################
-        n = A.shape[0]
-        m = B.shape[1]
-        Q = np.eye(n)
-        Q[0, 0] = 10.
-        Q[1, 1] = 10.
-        Q[2, 2] = 10.
-        # Q[11,11] = 0.01
-        R = np.diag([1., 1., 1.])
-        self.K, _, _ = lqr(A, B, Q, R)
+        print("state",state_est)
 
 
     def mat3d(self, x,y,z):
@@ -180,13 +104,11 @@ class RunParticle():
         plt.show()
 
     def get_initial_distribution(self):
-        # NOTE for now assuming everything stays in NeRF coordinates (x right, y up, z inward)
-
         # get distribution of particles from user, generate np.array of (num_particles, 6)
-        self.initial_particles_noise = np.random.uniform(np.array(
-            [self.min_bounds['px'], self.min_bounds['py'], self.min_bounds['pz']]),
-            np.array([self.max_bounds['px'], self.max_bounds['py'], self.max_bounds['pz']]),
-            size = (self.num_particles, 3))
+        self.initial_particles_noise = np.random.uniform(
+            np.array([self.min_bounds['px'], self.min_bounds['py'], self.min_bounds['pz'],self.min_bounds['pVx'], self.min_bounds['pVy'], self.min_bounds['pVz']]),
+            np.array([self.max_bounds['px'], self.max_bounds['py'], self.max_bounds['pz'],self.max_bounds['pVx'], self.max_bounds['pVy'], self.max_bounds['pVz']]),
+            size = (self.num_particles, self.num_particle_states))
         
         # Dict of position + rotation, with position as np.array(300x6)
         self.initial_particles = self.set_initial_particles()
@@ -200,9 +122,9 @@ class RunParticle():
         ax.set_xlabel('X Label')
         ax.set_ylabel('Y Label')
         ax.set_zlabel('Z Label')
-        ax.set_xlim(-10, 10)  # Set X-axis limits
-        ax.set_ylim(-10, 10)  # Set Y-axis limits
-        ax.set_zlim(-10, 10)  # Set Z-axis limits
+        ax.set_xlim(-4, 4)  # Set X-axis limits
+        ax.set_ylim(-4, 4)  # Set Y-axis limits
+        ax.set_zlim(-4, 4)  # Set Z-axis limits
         # Show the plot
         plt.show()
 
@@ -214,7 +136,8 @@ class RunParticle():
 
     def set_initial_particles(self):
         initial_positions = np.zeros((self.num_particles, 3))
-        initial_rotations = np.zeros((self.num_particles, 3))
+        initial_velocities = np.zeros((self.num_particles, 3))
+        
         for index, particle in enumerate(self.initial_particles_noise):
             # Initialize at origin location
             i = self.ref_traj[0]
@@ -222,11 +145,15 @@ class RunParticle():
             x = i[0] + particle[0]
             y = i[1] + particle[1]
             z = i[2] + particle[2]
+            Vx = particle[3]
+            Vy = particle[4]
+            Vz = particle[5]
 
             # set positions
-            initial_positions[index,:] = [x,y,z]
-            
-        return  {'position':initial_positions, 'rotation':initial_rotations}
+            initial_positions[index,:] = [x, y, z]
+            initial_velocities[index,:] = [Vx, Vy, Vz]
+
+        return  {'position':initial_positions, 'velocity':initial_velocities}
 
     def u(self, x, goal):
         yaw = x[10]
@@ -266,101 +193,58 @@ class RunParticle():
         movement = self.control.simulate(x0, goal, dt)
         pass
 
-    def publish_pose_est(self, pose_est, img_timestamp = None):
-        # print("Pose Est",pose_est.shape)
-        pose_est = self.move()
- 
-        position_est = pose_est[:3, 3]
-        rot_est = R.as_quat(pose_est[:3, :3])
-
-        # populate msg with pose information
-        pose_est.pose.pose.position.x = position_est[0]
-        pose_est.pose.pose.position.y = position_est[1]
-        pose_est.pose.pose.position.z = position_est[2]
-        pose_est.pose.pose.orientation.w = rot_est[0]
-        pose_est.pose.pose.orientation.x = rot_est[1]
-        pose_est.pose.pose.orientation.y = rot_est[2]
-        pose_est.pose.pose.orientation.z = rot_est[3]
-        # print(pose_est_gtsam.rotation().ypr())
-
-        # publish pose
-        self.pose_pub.publish(pose_est)
-
-    def odometry_update(self,state0, state1):
-        state_difference = state1-state0
-        # print("statediff",state_difference)
-        # rot0 = R.from_matrix(state0[:3,:3])
-        # rot1 = R.from_matrix(state1[:3,:3])
-        # eul0 = rot0.as_euler('xyz')
-        # eul1 = rot1.as_euler('xyz')
-        # diffeul = eul1-eul0
-        for i in range(self.num_particles):
-            self.filter.particles['position'][i] += [state_difference[0], state_difference[1], state_difference[2]]
-
-            # peul = self.filter.particles['rotation'][i].as_euler('xyz')
-            # peul += diffeul
-            # prot = R.from_euler('xyz',peul)
-            # self.filter.particles['rotation'][i] = prot
+    def odometry_update(self,curr_state_est):
+        # Use current estimate of x,y,z,Vx,Vy,Vz and dynamics model to compute most probable system propagation
         
-        # print("Finish odometry update")
+        system_time_interval = 0.2
+        offset = curr_state_est[:3] + system_time_interval*curr_state_est[3:]
+
+        for i in range(self.num_particles):
+            self.filter.particles['position'][i] += offset
     
     def get_loss(self, current_pose, particle_poses):
         losses = []
 
-        start_time = time.time()
-
         for i, particle in enumerate(particle_poses):
             loss = np.sqrt((current_pose[0]-particle[0])**2 + (current_pose[1]-particle[1])**2 + (current_pose[2]-particle[2])**2)
             losses.append(loss)
-
-        nerf_time = time.time() - start_time
                    
-        return losses, nerf_time
+        return losses
 
     def rgb_run(self,current_pose):
         start_time = time.time()
-        self.rgb_input_count += 1
+
+        # Update velocity with newest observation:
+        timestep = 0.1
+        self.filter.update_vel(current_pose,timestep)
 
         # make copies to prevent mutations
         particles_position_before_update = np.copy(self.filter.particles['position'])
-        # particles_rotation_before_update = [i.as_matrix() for i in self.filter.particles['rotation']]
+        particles_velocity_before_update = np.copy(self.filter.particles['velocity'])
 
-        total_nerf_time = 0
-
-        # if self.sampling_strategy == 'random':
-        # From the meshgrid of image, find Batch# of points to randomly sample and compare, list of 2d coordinatesg
-
-
-        losses, nerf_time = self.get_loss(current_pose, particles_position_before_update)
+        losses = self.get_loss(current_pose, particles_position_before_update)
 
         temp = 1
         for index, particle in enumerate(particles_position_before_update):
             self.filter.weights[index] = 1/(losses[index]+temp)
 
-        total_nerf_time += nerf_time
-
         # Resample Weights
         self.filter.update()
         self.num_updates += 1
-        
+
         position_est = self.filter.compute_weighted_position_average()
-        # rot_est = self.filter.compute_simple_rotation_average()s
-        pose_est = np.eye(4)  # Initialize as identity matrix
-        # pose_est[:3, :3] = rot_est  # Set the upper-left 3x3 submatrix as the rotation matrix
-        pose_est[:3, 3] = position_est  # Set the rightmost column as the translation vector
-        self.all_pose_est.append(pose_est)
-        
+        velocity_est = self.filter.compute_weighted_velocity_average()
+        state_est = np.concatenate((position_est, velocity_est))
+
+        self.state_est_history.append(state_est)
+
         # Update odometry step
-        # current_state = self.ref_traj[iter]
-        # next_state = self.ref_traj[iter+1]
-        # self.odometry_update(current_state,next_state)
-        # self.publish_pose_est(pose_est)
+        print("state est:",state_est)
+        self.odometry_update(state_est) 
 
+        print(f"Update # {self.num_updates}, Iteration runtime: {time.time() - start_time}")
 
-        update_time = time.time() - start_time
-        print("forward passes took:", total_nerf_time, "out of total", update_time, "for update step")
-
-        return pose_est
+        return state_est
     
     # def step(self, cur_state_estimated, initial_condition, time_step, goal_state):
     #     goal_pos = [
@@ -379,35 +263,6 @@ class RunParticle():
     #     sol = self.simulate(initial_condition, cur_state_estimated, goal, time_step)
     #     self.last_ref_yaw = goal_yaw
     #     return sol
-    
-    # def run_ref(self, ref_state, time_step):
-    #     ref_pos = ref_state[0]
-    #     ref_v = ref_state[1]
-    #     return np.array([ref_pos+ref_v*time_step, ref_v])
-    
-
-    # def TC_simulate(self, initial_condition, time_horizon, time_step):
-    #     time_steps = np.arange(0, time_horizon+time_step/2, time_step)
-
-    #     state = np.array(initial_condition)
-    #     trajectory = copy.deepcopy(state)
-    #     trajectory = np.insert(trajectory, 0, time_steps[0])
-    #     trajectory = np.reshape(trajectory, (1, -1))
-    #     for i in range(1, len(time_steps)):
-    #         x_ground_truth = state[:12]
-    #         x_estimate = state[12:24]
-    #         ref_state = state[24:]
-    #         x_next = self.step(x_estimate, x_ground_truth, time_step, ref_state)
-    #         x_next[10] = x_next[10]%(np.pi*2)
-    #         if x_next[10] > np.pi/2:
-    #             x_next[10] = x_next[10]-np.pi*2
-    #         ref_next = self.run_ref(ref_state, time_step)
-    #         state = np.concatenate((x_next, x_estimate, ref_next))
-    #         tmp = np.insert(state, 0, time_steps[i])
-    #         tmp = np.reshape(tmp, (1,-1))
-    #         trajectory = np.vstack((trajectory, tmp))
-
-    #     return trajectory
 
 
 
@@ -417,7 +272,7 @@ if __name__ == "__main__":
 
  
     # Initialize mcl Position
-    est_states = np.zeros((len(mcl.ref_traj) ,3))
+    est_states = np.zeros((len(mcl.ref_traj) ,6)) # x y z vx vy vz
     gt_states  = np.zeros((len(mcl.ref_traj) ,16))
     iteration_count = np.arange(0,len(mcl.ref_traj) , 1, dtype=int)
 
@@ -426,6 +281,9 @@ if __name__ == "__main__":
     pose_est_history_x = []
     pose_est_history_y = []
     pose_est_history_z = []
+    velocity_est_history_x = []
+    velocity_est_history_y =[]
+    velocity_est_history_z = []
     PF_history_x = []
     PF_history_y = []
     PF_history_z = []
@@ -450,27 +308,16 @@ if __name__ == "__main__":
     
 
     # Assume constant time step between trajectory stepping
+    time_step = 0.2
     for iter in range(500):
         
-        # init = np.concatenate((state, state, ref))
-        # trace = mcl.TC_simulate(init, time_horizon=0.1, time_step=0.01)
-        # state = trace[-1,1:13]
-        # ref = trace[-1, 25:]
-        # lstate = trace[-1,1:]
-        # ltime = iter*0.1
-        # lstate = np.insert(lstate, 0, ltime).reshape((1,-1))
-        # traj = np.vstack((traj,lstate))
-
-
-        # state_now = mcl.ref_traj[iter]
-        # state_future = mcl.ref_traj[iter+1]
-        # i = state_now
-        # future = state_future
-        
-        pose_est = mcl.rgb_run(current_pose= mcl.ref_traj[iter])   
-        pose_est_history_x.append(pose_est[0,3])
-        pose_est_history_y.append(pose_est[1,3])
-        pose_est_history_z.append(pose_est[2,3])
+        state_est = mcl.rgb_run(current_pose= mcl.ref_traj[iter])   
+        pose_est_history_x.append(state_est[0])
+        pose_est_history_y.append(state_est[1])
+        pose_est_history_z.append(state_est[2])
+        velocity_est_history_x.append(state_est[3])
+        velocity_est_history_y.append(state_est[4])
+        velocity_est_history_z.append(state_est[5])
 
         PF_history_x.append(np.array(mcl.filter.particles['position'][:,0]).flatten())
         PF_history_y.append(np.array(mcl.filter.particles['position'][:,1]).flatten())
@@ -479,7 +326,17 @@ if __name__ == "__main__":
     PF_history_x = np.array(PF_history_x)
     PF_history_y = np.array(PF_history_y)
     PF_history_z = np.array(PF_history_z)
-    print("shsss",PF_history_x.shape)
+
+    times = np.arange(0,time_step*len(pose_est_history_x),time_step)
+    velocity_GT = (mcl.ref_traj[1:]-mcl.ref_traj[:-1])/time_step
+
+
+    fig, (vel) = plt.subplots(1, 1, figsize=(14, 10))
+    vel.plot(times, velocity_GT[:len(times),0], label = "GT Vel x")
+    vel.plot(times, velocity_GT[:len(times),1], label = "GT Vel y")
+    vel.plot(times, velocity_GT[:len(times),2], label = "GT Vel z")
+    vel.legend()
+    plt.show()
 
     fig = plt.figure(1)
     ax = fig.add_subplot(111, projection='3d')
@@ -493,50 +350,50 @@ if __name__ == "__main__":
     ax.plot(pose_est_history_x,pose_est_history_y,pose_est_history_z, color = 'g')
     plt.show()
 
-    SIM_TIME = 40.0 
-    DT = SIM_TIME/len(pose_est_history_x)  # time tick [s]
-    print("DT is ",DT)
-    time = 0.0
-    show_animation = False
-    count = 0
+    # SIM_TIME = 40.0 
+    # DT = SIM_TIME/len(pose_est_history_x)  # time tick [s]
+    # print("DT is ",DT)
+    # time = 0.0
+    # show_animation = False
+    # count = 0
 
-    # Initialize a 3D plot
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection='3d')
+    # # Initialize a 3D plot
+    # fig = plt.figure()
+    # ax = fig.add_subplot(111, projection='3d')
 
-    # Simulation loop
-    while SIM_TIME >= time:
-        time += DT
+    # # Simulation loop
+    # while SIM_TIME >= time:
+    #     time += DT
         
 
-        if show_animation:
-            ax.cla()  # Clear the current axis
+    #     if show_animation:
+    #         ax.cla()  # Clear the current axis
 
-            # For stopping simulation with the esc key.
-            fig.canvas.mpl_connect('key_release_event',
-                                lambda event: [exit(0) if event.key == 'escape' else None])
+    #         # For stopping simulation with the esc key.
+    #         fig.canvas.mpl_connect('key_release_event',
+    #                             lambda event: [exit(0) if event.key == 'escape' else None])
 
-            # Plot the trajectory up to the current count in 3D
-            ax.plot(mcl.ref_traj[:count, 0], mcl.ref_traj[:count, 1], mcl.ref_traj[:count, 2], "*k")
-            ax.plot(pose_est_history_x[count], pose_est_history_y[count], pose_est_history_z[count], "*r" )
-            # ax.plot(PF_history_x[count],PF_history_y[count],PF_history_y[count], 'o',color='blue', alpha=0.5)
-            # Additional plotting commands can be added here
+    #         # Plot the trajectory up to the current count in 3D
+    #         ax.plot(mcl.ref_traj[:count, 0], mcl.ref_traj[:count, 1], mcl.ref_traj[:count, 2], "*k")
+    #         ax.plot(pose_est_history_x[count], pose_est_history_y[count], pose_est_history_z[count], "*r" )
+    #         # ax.plot(PF_history_x[count],PF_history_y[count],PF_history_y[count], 'o',color='blue', alpha=0.5)
+    #         # Additional plotting commands can be added here
             
-            ax.set_xlabel('X')
-            ax.set_ylabel('Y')
-            ax.set_zlabel('Z')
-            ax.set_xlim(-40, 40)  # Set X-axis limits
-            ax.set_ylim(-40, 40)  # Set Y-axis limits
-            ax.set_zlim(-40, 40)  # Set Z-axis limits
+    #         ax.set_xlabel('X')
+    #         ax.set_ylabel('Y')
+    #         ax.set_zlabel('Z')
+    #         ax.set_xlim(-40, 40)  # Set X-axis limits
+    #         ax.set_ylim(-40, 40)  # Set Y-axis limits
+    #         ax.set_zlim(-40, 40)  # Set Z-axis limits
 
-            ax.axis("equal")
-            ax.set_title('3D Trajectory Animation')
-            plt.grid(True)
-            plt.pause(0.001)
-        count += 1  # Increment count to update the trajectory being plotted
+    #         ax.axis("equal")
+    #         ax.set_title('3D Trajectory Animation')
+    #         plt.grid(True)
+    #         plt.pause(0.001)
+    #     count += 1  # Increment count to update the trajectory being plotted
 
-    # Show the final plot after the simulation ends
-    plt.show()
+    # # Show the final plot after the simulation ends
+    # plt.show()
 
 
     print("FINISHED CODE")

@@ -1,7 +1,5 @@
 import numpy as np 
 from numpy import cos, sin
-from verse.agents import BaseAgent
-from verse.parser.parser import ControllerIR
 import copy 
 import matplotlib.pyplot as plt 
 import scipy
@@ -10,49 +8,14 @@ import os
 import json 
 from scipy.interpolate import UnivariateSpline
 from scipy.spatial.transform import Rotation as R
-from nerfstudio.cameras.cameras import Cameras, CameraType
 import torch 
-from nerfstudio.utils import colormaps
 import cv2
-from nerfstudio.utils.eval_utils import eval_setup
 from pathlib import Path
 script_dir = os.path.dirname(os.path.realpath(__file__))
-from Run_main import Run
+from Run_main3 import Run
 
 import logging
 from datetime import datetime
-
-def render_Nerf_image_simple(model, camera_to_world, save, save_name, iter,particle_number):
-    # print("SIMPLE RENDER C2W ...........\n",camera_to_world)
-    fov = 50
-
-    width = height = 320
-
-    fx = (width/2)/(np.tan(np.deg2rad(fov)/2))
-    fy = (height/2)/(np.tan(np.deg2rad(fov)/2))
-    cx = width/2
-    cy = height/2
-    nerfW = nerfH = width
-
-    camera_to_world = torch.FloatTensor( camera_to_world )
-
-    camera = Cameras(camera_to_worlds = camera_to_world, fx = fx, fy = fy, cx = cx, cy = cy, width=nerfW, height=nerfH, camera_type=CameraType.PERSPECTIVE)
-    camera = camera.to('cuda')
-    ray_bundle = camera.generate_rays(camera_indices=0, aabb_box=None)
-
-    with torch.no_grad():
-        tmp = model.get_outputs_for_camera_ray_bundle(ray_bundle)
-
-    img = tmp['rgb']
-    img =(colormaps.apply_colormap(image=img, colormap_options=colormaps.ColormapOptions())).cpu().numpy()
-    # plt.imshow(img)
-    # plt.show()
-
-    if save:
-        output_dir = os.path.join(script_dir, f"./imgs/{save_name}{particle_number}.jpg")
-        cv2.imwrite(output_dir, cv2.cvtColor(img, cv2.COLOR_BGR2RGB)*255)
-    return img
-
 
 # quadrotor physical constants
 g = 9.81; d0 = 10; d1 = 8; n0 = 10; kT = 0.91
@@ -97,14 +60,13 @@ B[3, 0] = n0
 B[7, 1] = n0
 B[9, 2] = kT
 
-class DroneAgent(BaseAgent):
+class DroneAgent():
     def __init__(self, id, code=None, file_name = None, ref_spline = 'camera_path_spline'):
         self.id = id
         self.init_cont = None
         self.init_disc = None
         self.static_parameters = None 
         self.uncertain_parameters = None
-        self.decision_logic = ControllerIR.empty()
 
         with open(ref_spline, 'r') as f:
             data = json.load(f)
@@ -326,3 +288,100 @@ if __name__ == "__main__":
 
                     logging.info( (gt_state.tolist() ,est_state.tolist() ,[param_fog, param_dark]) )
                     print("iteration i = ",i)
+
+                #Render 2d Images
+                # script_dir = os.path.dirname(os.path.realpath(__file__))
+
+                # config_fn = os.path.join('./nerf_env/nerf_env/outputs/IRL2/nerfacto/2023-09-21_210511/config.yml')
+                # config_fn = './outputs/IRL2/nerfacto/2023-09-21_210511/config.yml'
+                # # config_fn = os.path.join(self.path)
+                # config_path = Path(config_fn)
+                # _, pipeline, _, step = eval_setup(
+                #     config_path,
+                #     eval_num_rays_per_chunk=None,
+                #     test_mode='inference'
+                # )
+                
+
+                # for i in range(len(traj)):
+                #     print(i)
+                #     x = traj[i, 1]
+                #     y = traj[i, 5]
+                #     z = traj[i, 9]
+                #     roll = traj[i, 3]
+                #     pitch = traj[i, 7]
+                #     yaw = traj[i, 11]
+
+                #     camera_to_world = np.zeros((3,4))
+                #     camera_to_world[:,3] = [x,y,z]
+
+                #     rot_mat = R.from_euler('xyz',[roll+np.pi/2, pitch, yaw-np.pi/2]).as_matrix()
+                #     camera_to_world[:3, :3] = rot_mat
+
+                #     render_Nerf_image_simple(pipeline.model, camera_to_world, save=True, save_name = 'img_', iter = 0, particle_number = i)
+
+                # fig = plt.figure(1)
+                # ax = fig.add_subplot(111, projection='3d')
+                # # ax.plot(x, y, z, color='b')
+                # t = np.linspace(0, 32, 1000)
+                # x = drone_agent.ref_traj[0](t)
+                # y = drone_agent.ref_traj[1](t)
+                # z = drone_agent.ref_traj[2](t)
+                
+                # plt.figure(1)
+                # ax.plot(x,y,z, color = 'b')
+                # ax.plot(traj[:,1], traj[:,5], traj[:,9], color = 'r')
+                # est = np.array(est)
+                # ax.plot(est[:,0], est[:,1], est[:,2], color = 'g')
+                # yaw_ref = []
+                # yaw_act = []
+                # for i in range(len(traj)):
+                #     x, y, z = traj[i, 1], traj[i, 5], traj[i, 9]
+                #     yaw = traj[i, 11]
+                #     offset_x = 0.1*np.cos(yaw)
+                #     offset_y = 0.1*np.sin(yaw)
+                #     plt.figure(1)
+                #     ax.plot([x, x+offset_x], [y, y+offset_y], [z, z], 'g')
+                #     yaw_act.append(yaw)
+
+                #     t = traj[i, 25]
+                #     x = drone_agent.ref_traj[0](t)
+                #     y = drone_agent.ref_traj[1](t)
+                #     z = drone_agent.ref_traj[2](t)
+
+                #     xn = drone_agent.ref_traj[0](t+0.01)
+                #     yn = drone_agent.ref_traj[1](t+0.01)
+                #     yaw = np.arctan2(yn-y, xn-x)
+                #     yaw = yaw%(np.pi*2)
+                #     if yaw > np.pi/2:
+                #         yaw -= 2*np.pi
+
+                #     yaw_ref.append(yaw)
+                #     offset_x = 0.1*np.cos(yaw)
+                #     offset_y = 0.1*np.sin(yaw)
+                #     plt.figure(1)
+                #     ax.plot([x, x+offset_x], [y, y+offset_y], [z, z], 'r')
+                #     # ax.scatter([x],[y],[z],color = 'm')
+                # ax.set_xlabel('x')
+                # ax.set_ylabel('y')
+                # ax.set_zlabel('z')
+
+                # plt.figure(2)
+                # plt.plot(traj[1:,15], label='est')
+                # plt.plot(traj[:-1,3], label='act')
+                # plt.title('roll')
+                # plt.legend()
+
+                # plt.figure(3)
+                # plt.plot(traj[1:,19], label='est')
+                # plt.plot(traj[:-1,7], label='act')
+                # plt.title('pitch')
+                # plt.legend()
+
+                # plt.figure(4)
+                # plt.plot(traj[1:,23], label='est')
+                # plt.plot(traj[:-1,11], label='act')
+                # plt.title('yaw')
+                # plt.legend()
+
+                # plt.show()

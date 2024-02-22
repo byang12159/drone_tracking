@@ -213,6 +213,7 @@ if __name__ == "__main__":
     cam_rpy = R.from_matrix(cam_init[0:3, 0:3]).as_euler('xyz')
     print("Starting Euler",cam_rpy)
     
+    # drone init = [x,vx,rot_x,rot_x_dot, y,vy,rot_y,rot_y_dot, z,vx,rot_z,rot_z_dot,]
     drone_init = np.array([
         cam_init_pos[0], 0, cam_rpy[0]-np.pi/2, 0, 
         cam_init_pos[1], 0, cam_rpy[1], 0, 
@@ -233,24 +234,30 @@ if __name__ == "__main__":
 
     state_history = []
     for i in range(30):
+        # gt_state = [x y z vx vy vz]
+        gt_state = np.array([state[0], state[4], state[8], state[2], state[6], state[10]])
+        est_state = mcl.rgb_run(current_pose= gt_state)  
+        est.append(est_state)
+        est_state[5] = est_state[5]%(2*np.pi)
 
-
+        if est_state[5] > np.pi/2:
+            est_state[5] -= np.pi*2
+        # NEED CHANGE EST_STATE format from return
         est_state_full = np.array([
-            drone_agent.ref_traj_discrete[i,0],
-            state[1],
-            0,
-            state[3],
-            drone_agent.ref_traj_discrete[i,1],
-            state[5],
-            0,
-            state[7],
-            drone_agent.ref_traj_discrete[i,2],
-            state[9],
-            0,
-            state[11],
+            est_state[0], #Estimate x
+            state[1], #Drone Vx
+            est_state[3], #Estimate Vx
+            state[3], #Drone rot_x_dot
+            est_state[1],#Estimate y
+            state[5], #Drone Vy
+            est_state[4], #Estimate Vy
+            state[7], #Drone rot_y_dot
+            est_state[2], #Estimate z
+            state[9], #Drone Vz
+            est_state[5], #Estimate Vx
+            state[11], #Drone rot_z_dot
         ])
         init = np.concatenate((state, est_state_full, ref))
-        # init = [x_ground_truth 0-12, x_estimate 12-24, ref_state 24-26]
   
         trace = drone_agent.TC_simulate(init, time_horizon=0.1, time_step=0.01)
         state = trace[-1,1:13]
