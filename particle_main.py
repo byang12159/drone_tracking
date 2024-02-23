@@ -21,8 +21,9 @@ from scipy.spatial.transform import Rotation
 import copy
 
 class RunParticle():
-    def __init__(self, trajectory, width=320, height=320, fov=50, batch_size=32):
+    def __init__(self, trajectory,starting_state, width=320, height=320, fov=50, batch_size=32):
 
+        self.inital_state = starting_state
         ####################### Import camera path trajectory json #######################
         with open(trajectory, 'r') as f:
             data = json.load(f)
@@ -118,13 +119,13 @@ class RunParticle():
         ax = fig.add_subplot(projection='3d')
 
         ax.scatter(self.initial_particles.get('position')[:,0],self.initial_particles.get('position')[:,1],self.initial_particles.get('position')[:,2],'*')
-        ax.scatter(self.ref_traj[:,0],self.ref_traj[:,1],self.ref_traj[:,2],'*')
+        ax.scatter(self.inital_state[0],self.inital_state[1],self.inital_state[2],'*')
         ax.set_xlabel('X Label')
         ax.set_ylabel('Y Label')
         ax.set_zlabel('Z Label')
-        ax.set_xlim(-4, 4)  # Set X-axis limits
-        ax.set_ylim(-4, 4)  # Set Y-axis limits
-        ax.set_zlim(-4, 4)  # Set Z-axis limits
+        # ax.set_xlim(-4, 4)  # Set X-axis limits
+        # ax.set_ylim(-4, 4)  # Set Y-axis limits
+        # ax.set_zlim(-4, 4)  # Set Z-axis limits
         # Show the plot
         plt.show()
 
@@ -140,8 +141,8 @@ class RunParticle():
         
         for index, particle in enumerate(self.initial_particles_noise):
             # Initialize at origin location
-            i = self.ref_traj[0]
-      
+            # i = self.ref_traj[0]
+            i = self.inital_state
             x = i[0] + particle[0]
             y = i[1] + particle[1]
             z = i[2] + particle[2]
@@ -308,7 +309,7 @@ if __name__ == "__main__":
     
 
     # Assume constant time step between trajectory stepping
-    time_step = 0.2
+    time_step = 1
     for iter in range(500):
         
         state_est = mcl.rgb_run(current_pose= mcl.ref_traj[iter])   
