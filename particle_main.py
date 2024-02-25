@@ -61,7 +61,8 @@ class RunParticle():
 
         self.format_particle_size = 0
         # bounds for particle initialization, meters + degrees
-        self.num_particle_states = 6
+        self.total_particle_states = 6
+        self.filter_dimension = 3
         self.min_bounds = {'px':-0.5,'py':-0.5,'pz':-0.5,'rz':-2.5,'ry':-179.0,'rx':-2.5,'pVx':-0.5,'pVy':-0.5,'pVz':-0.5}
         self.max_bounds = {'px':0.5,'py':0.5,'pz':0.5,'rz':2.5,'ry':179.0,'rx':2.5,      'pVx':0.5, 'pVy':0.5, 'pVz':0.5}
 
@@ -109,7 +110,7 @@ class RunParticle():
         self.initial_particles_noise = np.random.uniform(
             np.array([self.min_bounds['px'], self.min_bounds['py'], self.min_bounds['pz'],self.min_bounds['pVx'], self.min_bounds['pVy'], self.min_bounds['pVz']]),
             np.array([self.max_bounds['px'], self.max_bounds['py'], self.max_bounds['pz'],self.max_bounds['pVx'], self.max_bounds['pVy'], self.max_bounds['pVz']]),
-            size = (self.num_particles, self.num_particle_states))
+            size = (self.num_particles, self.total_particle_states))
         
         # Dict of position + rotation, with position as np.array(300x6)
         self.initial_particles = self.set_initial_particles()
@@ -136,8 +137,8 @@ class RunParticle():
 
 
     def set_initial_particles(self):
-        initial_positions = np.zeros((self.num_particles, 3))
-        initial_velocities = np.zeros((self.num_particles, 3))
+        initial_positions =  np.zeros((self.num_particles, self.filter_dimension))
+        initial_velocities = np.zeros((self.num_particles, self.filter_dimension))
         
         for index, particle in enumerate(self.initial_particles_noise):
             # Initialize at origin location
