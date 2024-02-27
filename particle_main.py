@@ -21,10 +21,12 @@ from scipy.spatial.transform import Rotation
 import copy
 
 class RunParticle():
-    def __init__(self, trajectory,starting_state, width=320, height=320, fov=50, batch_size=32):
+    def __init__(self,starting_state, width=320, height=320, fov=50, batch_size=32):
 
         self.inital_state = starting_state
         ####################### Import camera path trajectory json #######################
+
+        trajectory ="camera_path_spline.json"
         with open(trajectory, 'r') as f:
             data = json.load(f)
 
@@ -115,20 +117,20 @@ class RunParticle():
         # Dict of position + rotation, with position as np.array(300x6)
         self.initial_particles = self.set_initial_particles()
         
-        # Create a 3D figure
-        fig = plt.figure()
-        ax = fig.add_subplot(projection='3d')
+        # # Create a 3D figure
+        # fig = plt.figure()
+        # ax = fig.add_subplot(projection='3d')
 
-        ax.scatter(self.initial_particles.get('position')[:,0],self.initial_particles.get('position')[:,1],self.initial_particles.get('position')[:,2],'*')
-        ax.scatter(self.inital_state[0],self.inital_state[1],self.inital_state[2],'*')
-        ax.set_xlabel('X Label')
-        ax.set_ylabel('Y Label')
-        ax.set_zlabel('Z Label')
-        # ax.set_xlim(-4, 4)  # Set X-axis limits
-        # ax.set_ylim(-4, 4)  # Set Y-axis limits
-        # ax.set_zlim(-4, 4)  # Set Z-axis limits
-        # Show the plot
-        plt.show()
+        # ax.scatter(self.initial_particles.get('position')[:,0],self.initial_particles.get('position')[:,1],self.initial_particles.get('position')[:,2],'*')
+        # ax.scatter(self.inital_state[0],self.inital_state[1],self.inital_state[2],'*')
+        # ax.set_xlabel('X Label')
+        # ax.set_ylabel('Y Label')
+        # ax.set_zlabel('Z Label')
+        # # ax.set_xlim(-4, 4)  # Set X-axis limits
+        # # ax.set_ylim(-4, 4)  # Set Y-axis limits
+        # # ax.set_zlim(-4, 4)  # Set Z-axis limits
+        # # Show the plot
+        # plt.show()
 
         # self.mat3d(self.initial_particles.get('position')[:,0],self.initial_particles.get('position')[:,1],self.initial_particles.get('position')[:,2])
 
@@ -157,43 +159,6 @@ class RunParticle():
 
         return  {'position':initial_positions, 'velocity':initial_velocities}
 
-    def u(self, x, goal):
-        yaw = x[10]
-        err = [goal[0],0,0,0, goal[1],0,0,0, goal[2],0] - x[:10]
-        err_pos = err[[0,4,8]]
-
-        err_pos = np.linalg.inv(np.array([
-            [np.cos(yaw), -np.sin(yaw), 0],
-            [np.sin(yaw), np.cos(yaw), 0],
-            [0,0,1]
-        ]))@err_pos
-
-        err[[0,4,8]] = err_pos
-        u_pos = self.K.dot(err) + [0, 0, g / kT]
-        u_ori = (goal[3]-yaw)*1+(0-x[11])*1.0
-        if abs(goal[3]-yaw)>1:
-            print('stop')
-        return np.concatenate((u_pos, [u_ori]))
-    
-    ######################## The closed_loop system #######################
-    def cl_nonlinear(self, x, t, x_est, goal):
-        x = np.array(x)
-        dot_x = dynamics(x, self.u(x_est, goal))
-        return dot_x
-
-    # simulate
-    def simulate(self, x, x_est, goal, dt):
-        curr_position = np.array(x)[[0, 4, 8]]
-        goal_pos = goal[:3]
-        error = goal_pos - curr_position
-        distance = np.sqrt((error**2).sum())
-        if distance > 1:
-            goal[:3] = curr_position + error / distance
-        return odeint(self.cl_nonlinear, x, [0, dt], args=(x_est, goal,))[-1]
-    def move(self, x0=np.zeros(12), goal=np.zeros(12), dt=0.1):
-        # integrate dynamics
-        movement = self.control.simulate(x0, goal, dt)
-        pass
 
     def odometry_update(self,curr_state_est):
         # Use current estimate of x,y,z,Vx,Vy,Vz and dynamics model to compute most probable system propagation
@@ -270,7 +235,10 @@ class RunParticle():
 
 if __name__ == "__main__":
 
-    mcl = RunParticle(trajectory="camera_path_spline.json")    
+    simple_trajx = np.arange(0,100,1).reshape(100,1)
+    simple_traj = np.hstack((simple_trajx, np.ones_like(simple_trajx), np.zeros_like(simple_trajx)))
+
+    mcl = RunParticle(starting_state=simple_traj[0])    
 
  
     # Initialize mcl Position
@@ -311,9 +279,12 @@ if __name__ == "__main__":
 
     # Assume constant time step between trajectory stepping
     time_step = 1
-    for iter in range(500):
+
+
+    print(simple_traj.shape)
+    for iter in range(1,100):
         
-        state_est = mcl.rgb_run(current_pose= mcl.ref_traj[iter])   
+        state_est = mcl.rgb_run(current_pose= simple_traj[iter])   
         pose_est_history_x.append(state_est[0])
         pose_est_history_y.append(state_est[1])
         pose_est_history_z.append(state_est[2])
@@ -348,7 +319,7 @@ if __name__ == "__main__":
     y = mcl.ref_traj[:,1]
     z = mcl.ref_traj[:,2]
     plt.figure(1)
-    ax.plot(x,y,z, color = 'b')
+    ax.plot(simple_traj[:,0],simple_traj[:,1],simple_traj[:,2], color = 'b')
     ax.plot(pose_est_history_x,pose_est_history_y,pose_est_history_z, color = 'g')
     plt.show()
 
