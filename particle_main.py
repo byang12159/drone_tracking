@@ -68,7 +68,7 @@ class RunParticle():
         self.min_bounds = {'px':-0.5,'py':-0.5,'pz':-0.5,'rz':-2.5,'ry':-179.0,'rx':-2.5,'pVx':-0.5,'pVy':-0.5,'pVz':-0.5}
         self.max_bounds = {'px':0.5,'py':0.5,'pz':0.5,'rz':2.5,'ry':179.0,'rx':2.5,      'pVx':0.5, 'pVy':0.5, 'pVz':0.5}
 
-        self.num_particles = 300
+        self.num_particles = 500
         
         self.state_est_history = []
 
@@ -86,7 +86,7 @@ class RunParticle():
         position_est = self.filter.compute_simple_position_average()
         velocity_est = self.filter.compute_simple_velocity_average()
         state_est = np.concatenate((position_est, velocity_est))
-
+        print("state_est",state_est)
         self.state_est_history.append(state_est)
 
         print("state",state_est)
@@ -147,8 +147,8 @@ class RunParticle():
             # i = self.ref_traj[0]
             i = self.inital_state
             x = i[0] + particle[0]
-            y = i[1] + particle[1]
-            z = i[2] + particle[2]
+            y = i[1] + 0 #particle[1]
+            z = i[2] + 0 #particle[2]
             Vx = particle[3]
             Vy = particle[4]
             Vz = particle[5]
@@ -156,17 +156,21 @@ class RunParticle():
             # set positions
             initial_positions[index,:] = [x, y, z]
             initial_velocities[index,:] = [Vx, Vy, Vz]
+            # initial_positions[index] = x
+            # initial_velocities[index] = Vx
 
         return  {'position':initial_positions, 'velocity':initial_velocities}
 
 
-    def odometry_update(self,curr_state_est):
+    def odometry_update(self,current_pose, system_time_interval ):
         # Use current estimate of x,y,z,Vx,Vy,Vz and dynamics model to compute most probable system propagation
-        
-        system_time_interval = 0.2
-        offset = curr_state_est[:3] + system_time_interval*curr_state_est[3:]
+     
+        # offset = system_time_interval*curr_state_est[3:]
+        # offset = system_time_interval*curr_vel_est
 
         for i in range(self.num_particles):
+            # offset = system_time_interval*self.filter.particles['velocity'][i]
+            offset = system_time_interval*np.array([1,0,0])
             self.filter.particles['position'][i] += offset
     
     def get_loss(self, current_pose, particle_poses):
@@ -178,16 +182,17 @@ class RunParticle():
                    
         return losses
 
-    def rgb_run(self,current_pose):
+    def rgb_run(self,current_pose, timestep, lastpose):
         start_time = time.time()
-
-        # Update velocity with newest observation:
-        timestep = 0.1
-        self.filter.update_vel(current_pose,timestep)
 
         # make copies to prevent mutations
         particles_position_before_update = np.copy(self.filter.particles['position'])
         particles_velocity_before_update = np.copy(self.filter.particles['velocity'])
+
+
+
+
+        self.odometry_update(current_pose,timestep) 
 
         losses = self.get_loss(current_pose, particles_position_before_update)
 
@@ -198,6 +203,8 @@ class RunParticle():
         # Resample Weights
         self.filter.update()
         self.num_updates += 1
+        
+
 
         position_est = self.filter.compute_weighted_position_average()
         velocity_est = self.filter.compute_weighted_velocity_average()
@@ -207,31 +214,15 @@ class RunParticle():
 
         # Update odometry step
         print("state est:",state_est)
-        self.odometry_update(state_est) 
-
         print(f"Update # {self.num_updates}, Iteration runtime: {time.time() - start_time}")
+
+        # # Update velocity with newest observation:
+        # self.filter.update_vel(current_pose,timestep)
+        # Update velocity with newest observation:
+        self.filter.update_vel(particles_position_before_update,current_pose,position_est, lastpose,timestep)
 
         return state_est
     
-    # def step(self, cur_state_estimated, initial_condition, time_step, goal_state):
-    #     goal_pos = [
-    #         self.ref_traj_spline[0](goal_state[0]),
-    #         self.ref_traj_spline[1](goal_state[0]),
-    #         self.ref_traj_spline[2](goal_state[0]),
-    #     ]
-    #     goal_yaw = np.arctan2(
-    #         self.ref_traj_spline[1](goal_state[0]+0.001)-self.ref_traj_spline[1](goal_state[0]),
-    #         self.ref_traj_spline[0](goal_state[0]+0.001)-self.ref_traj_spline[0](goal_state[0])
-    #     ) 
-    #     goal_yaw = goal_yaw%(np.pi*2)
-    #     if goal_yaw > np.pi/2:
-    #         goal_yaw -= 2*np.pi
-    #     goal = goal_pos + [goal_yaw]
-    #     sol = self.simulate(initial_condition, cur_state_estimated, goal, time_step)
-    #     self.last_ref_yaw = goal_yaw
-    #     return sol
-
-
 
 if __name__ == "__main__":
 
@@ -280,11 +271,11 @@ if __name__ == "__main__":
     # Assume constant time step between trajectory stepping
     time_step = 1
 
-
+    last_pos = [0,0,0]
     print(simple_traj.shape)
     for iter in range(1,100):
         
-        state_est = mcl.rgb_run(current_pose= simple_traj[iter])   
+        state_est, oldparticlepos = mcl.rgb_run(current_pose= simple_traj[iter], )   
         pose_est_history_x.append(state_est[0])
         pose_est_history_y.append(state_est[1])
         pose_est_history_z.append(state_est[2])

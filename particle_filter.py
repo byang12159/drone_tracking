@@ -74,19 +74,24 @@ class ParticleFilter:
         #resample
         choice = np.random.choice(self.num_particles, self.num_particles, p = self.weights, replace=True)
         # Add some noise 
-        noise_level = 0.5
+        noise_level = 0
         outlier_level = 0.2
-        random_noise = np.random.uniform(-noise_level, noise_level, size=(290, 3)) 
-        outlier_noise = np.random.uniform(-outlier_level, outlier_level, size=(10, 3)) 
+        num_outliers = int(self.num_particles*0.08)
+        random_noise = np.random.uniform(-noise_level, noise_level, size=(self.num_particles-num_outliers, 3)) 
+        outlier_noise = np.random.uniform(-outlier_level, outlier_level, size=(num_outliers, 3)) 
         total_noise = np.vstack((random_noise,outlier_noise))
-        temp = {'position':np.copy(self.particles['position'])[choice, :]+total_noise, 'velocity':np.copy(self.particles['velocity'])[choice,:]}
+
+        vel_noise_level = 0.05
+        vel_noise = np.random.uniform(-vel_noise_level, vel_noise_level, size=(self.num_particles, 3)) 
+        temp = {'position':np.copy(self.particles['position'])[choice, :]+total_noise, 'velocity':np.copy(self.particles['velocity'])[choice,:]+vel_noise}
 
         self.particles = temp
 
-    def update_vel(self, current_state_observe, timestep):
+    def update_vel(self, previous_state, currentpose, curest,lastest, timestep):
 
         for i in range(self.num_particles):
-            est_particle_velocity = (current_state_observe-self.particles['position'][i]) / timestep
+            # est_particle_velocity = (self.particles['position'][i]-previous_state[i]) / timestep
+            est_particle_velocity = (curest-lastest) / timestep
             self.particles['velocity'][i] = est_particle_velocity
 
     def compute_simple_position_average(self):
