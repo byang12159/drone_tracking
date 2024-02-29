@@ -66,7 +66,7 @@ client.takeoffAsync(10.0, chase).join()
 
 count = 0
 # lead_pose1 = [client.simGetVehiclePose(lead).position.x_val, client.simGetVehiclePose(lead).position.y_val, client.simGetVehiclePose(lead).position.z_val]
-lead_pose1 = [client.simGetVehiclePose(lead).position.x_val, 0,0]
+lead_pose1 = [client.simGetVehiclePose(lead).position.x_val, client.simGetVehiclePose(lead).position.y_val,client.simGetVehiclePose(lead).position.z_val]
 print("Lead position",lead_pose1)
 
 mcl = RunParticle(starting_state=lead_pose1)    
@@ -91,6 +91,7 @@ PF_history_z = []
 GT_state_history_x=[]
 GT_state_history_y=[]
 GT_state_history_z=[]
+total_vest=[]
 
 
 PF_history_x.append(np.array(mcl.filter.particles['position'][:,0]).flatten())
@@ -100,22 +101,41 @@ PF_history_z.append(np.array(mcl.filter.particles['position'][:,2]).flatten())
 # Assume constant time step between trajectory stepping
 timestep = 0.1
 oldpositions= lead_pose1
+totalcount = 120
+start_time = time.time()
+
+def random_traj(i,total_count):
+    x= 2* np.sin(i* 2*np.pi/total_count)
+    y= np.cos(i* 2*np.pi/total_count)
+    z= 0.5*np.sin(i* 2*np.pi/total_count)
+    return x,y,z
+
+def circle_traj(i,total_count):
+    radius = 10
+    start=lead_pose1
+    t = np.linspace(0,2*np.pi,totalcount)
+    x = lead_pose1[0]-radius - radius * np.cos(i* 2*np.pi/total_count)
+    y = lead_pose1[1]-radius * np.sin(i* 2*np.pi/total_count)
+    z= lead_pose1[2]
+    return x,y,z
 try:
 
     while True:
         dt_move = 2
         # Lead Drone Movement ###################################################################################################################
         # client.moveByVelocityAsync(1,0,0,dt_move,vehicle_name=lead)
-        client.moveByVelocityBodyFrameAsync(1, 0, 0, 30, vehicle_name = lead)
+        effortx,efforty,effortz = random_traj(count,totalcount)
+        client.moveByVelocityBodyFrameAsync(effortx, efforty, effortz, timestep, vehicle_name = lead)
 
         # identify location of lead
         # lead_pose = [client.simGetVehiclePose(lead).position.x_val, client.simGetVehiclePose(lead).position.y_val, client.simGetVehiclePose(lead).position.z_val]
-        lead_pose = [client.simGetVehiclePose(lead).position.x_val, 0,0]
+        lead_pose = [client.simGetVehiclePose(lead).position.x_val, client.simGetVehiclePose(lead).position.y_val,client.simGetVehiclePose(lead).position.z_val]
         # print("Lead position",lead_pose)
 
-        state_est = mcl.rgb_run(current_pose=lead_pose, timestep=0.1, lastpose=oldpositions)   
+        state_est,velest = mcl.rgb_run(current_pose=lead_pose, time_step=0.1, lastpose=oldpositions)   
         oldpositions = state_est[:3]
         
+        total_vest.append(velest)
         GT_state_history_x.append(lead_pose[0])
         GT_state_history_y.append(lead_pose[1])
         GT_state_history_z.append(lead_pose[2])
@@ -132,9 +152,11 @@ try:
         PF_history_z.append(np.array(mcl.filter.particles['position'][:,2]).flatten())
 
         count += 1
-        time.sleep(0.1)
+        curr_time = time.time()
+        print(f"Total simulation time: {round(curr_time-start_time,4)} sec")
+        time.sleep(timestep)
 
-        if count == 200:
+        if count == totalcount:
             break
 
     pose_est_history_x=np.array(pose_est_history_x)
@@ -146,6 +168,7 @@ try:
     GT_state_history_x = np.array(GT_state_history_x)
     GT_state_history_y = np.array(GT_state_history_y)
     GT_state_history_z = np.array(GT_state_history_z)
+    total_vest=np.array(total_vest)
     # print(GT_state_history.shape)
     # print(pose_est_history_x)
 
@@ -169,7 +192,7 @@ try:
     fig, (velx,vely,velz) = plt.subplots(3, 1, figsize=(14, 10))
     velx.plot(times, velocity_est_history_x, label = "Filter Vel x")
     velx.plot(times[1:], velocity_GT_x, label = "GT Vel x")
-    velx.set_ylim(-1,2)
+    # velx.set_ylim(-1,2)
     velx.legend()
     vely.plot(times, velocity_est_history_y, label = "Filter Vel y")    
     vely.plot(times[1:], velocity_GT_y, label = "GT Vel y")
@@ -178,24 +201,29 @@ try:
     velz.plot(times[1:], velocity_GT_z, label = "GT Vel z")
     velz.legend()
     
+    fig, (velx,vely,velz) = plt.subplots(3, 1, figsize=(14, 10))
+    velx.plot(times, total_vest[:,0], label = "Filter Vel x")
+    vely.plot(times, total_vest[:,1], label = "Filter Vel y")    
+    velz.plot(times, total_vest[:,2], label = "Filter Vel z")
+    velz.legend()
     plt.show()
 
-    fig = plt.figure(1)
-    ax = fig.add_subplot(111, projection='3d')
-    # ax.plot(x, y, z, color='b')
-    # t = np.linspace(0, 32, 1000)
-    # x = mcl.ref_traj[:,0]
-    # y = mcl.ref_traj[:,1]
-    # z = mcl.ref_traj[:,2]
-    plt.figure(1)
-    # ax.plot(x,y,z, color = 'b')
-    ax.plot(pose_est_history_x,pose_est_history_y,pose_est_history_z, '*',color = 'g',label='PF Estimate state')
-    ax.plot(GT_state_history_x,GT_state_history_y,GT_state_history_z, color = 'r',label='GT state')
-    ax.plot(lead_pose1[0],lead_pose1[1],lead_pose1[2],'*', color = 'b')
-    ax.plot(PF_history_x[0],PF_history_y[0],PF_history_z[0],'*', color = 'b')
-    ax.plot(PF_history_x[1],PF_history_y[1],PF_history_z[1],'*', color = 'purple')
-    plt.legend()
-    plt.show()
+    # fig = plt.figure(1)
+    # ax = fig.add_subplot(111, projection='3d')
+    # # ax.plot(x, y, z, color='b')
+    # # t = np.linspace(0, 32, 1000)
+    # # x = mcl.ref_traj[:,0]
+    # # y = mcl.ref_traj[:,1]
+    # # z = mcl.ref_traj[:,2]
+    # plt.figure(1)
+    # # ax.plot(x,y,z, color = 'b')
+    # ax.plot(pose_est_history_x,pose_est_history_y,pose_est_history_z, '*',color = 'g',label='PF Estimate state')
+    # ax.plot(GT_state_history_x,GT_state_history_y,GT_state_history_z, color = 'r',label='GT state')
+    # ax.plot(lead_pose1[0],lead_pose1[1],lead_pose1[2],'*', color = 'b')
+    # ax.plot(PF_history_x[0],PF_history_y[0],PF_history_z[0],'*', color = 'b')
+    # ax.plot(PF_history_x[1],PF_history_y[1],PF_history_z[1],'*', color = 'purple')
+    # plt.legend()
+    # plt.show()
 
     print("Finished")
     client.reset()

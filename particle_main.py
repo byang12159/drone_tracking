@@ -11,12 +11,12 @@ from particle_filter import ParticleFilter
 from scipy.spatial.transform import Rotation as R
 from scipy.integrate import odeint
 import os
-import torch 
+# import torch 
 from scipy.interpolate import UnivariateSpline
 from pathlib import Path
-import yaml
+
 import matplotlib.pyplot as plt 
-from torchvision.utils import save_image
+# from torchvision.utils import save_image
 from scipy.spatial.transform import Rotation
 import copy
 
@@ -68,7 +68,7 @@ class RunParticle():
         self.min_bounds = {'px':-0.5,'py':-0.5,'pz':-0.5,'rz':-2.5,'ry':-179.0,'rx':-2.5,'pVx':-0.5,'pVy':-0.5,'pVz':-0.5}
         self.max_bounds = {'px':0.5,'py':0.5,'pz':0.5,'rz':2.5,'ry':179.0,'rx':2.5,      'pVx':0.5, 'pVy':0.5, 'pVz':0.5}
 
-        self.num_particles = 500
+        self.num_particles = 900
         
         self.state_est_history = []
 
@@ -147,8 +147,8 @@ class RunParticle():
             # i = self.ref_traj[0]
             i = self.inital_state
             x = i[0] + particle[0]
-            y = i[1] + 0 #particle[1]
-            z = i[2] + 0 #particle[2]
+            y = i[1] + particle[1]
+            z = i[2] + particle[2]
             Vx = particle[3]
             Vy = particle[4]
             Vz = particle[5]
@@ -167,34 +167,40 @@ class RunParticle():
      
         # offset = system_time_interval*curr_state_est[3:]
         # offset = system_time_interval*curr_vel_est
-
+        # coef = 0.7
+        coef = 1
+        offsets=[]
         for i in range(self.num_particles):
             # offset = system_time_interval*self.filter.particles['velocity'][i]
-            offset = system_time_interval*np.array([1,0,0])
+            offset = coef*system_time_interval*self.filter.particles['velocity'][i]
+            offsets.append(offset)
             self.filter.particles['position'][i] += offset
+        offsets = np.array(offsets)
+        # return np.average(offsets)
     
-    def get_loss(self, current_pose, particle_poses):
+    def get_loss(self, current_pose, last_pose, particle_poses, particle_vel, time):
         losses = []
-
+        print("cur",current_pose,last_pose)
+        current_velocity = (np.array(current_pose)-np.array(last_pose))/time
         for i, particle in enumerate(particle_poses):
-            loss = np.sqrt((current_pose[0]-particle[0])**2 + (current_pose[1]-particle[1])**2 + (current_pose[2]-particle[2])**2)
+            loss = np.sqrt((current_pose[0]-particle[0])**2 + (current_pose[1]-particle[1])**2 + 0.5*(current_pose[2]-particle[2])**2 + 0.5*((current_velocity[0]-particle_vel[i][0])**2+ + (current_velocity[1]-particle_vel[i][1])**2+ + (current_velocity[2]-particle_vel[i][2])**2))
+            # loss = np.sqrt((current_pose[0]-particle[0])**2 )
             losses.append(loss)
                    
         return losses
 
-    def rgb_run(self,current_pose, timestep, lastpose):
-        start_time = time.time()
+    def rgb_run(self,current_pose, time_step, lastpose):
+        start_time = time.time() 
 
+        self.odometry_update(current_pose,time_step) 
         # make copies to prevent mutations
         particles_position_before_update = np.copy(self.filter.particles['position'])
         particles_velocity_before_update = np.copy(self.filter.particles['velocity'])
 
+        velest = np.mean(particles_velocity_before_update,axis=0)
 
 
-
-        self.odometry_update(current_pose,timestep) 
-
-        losses = self.get_loss(current_pose, particles_position_before_update)
+        losses = self.get_loss(current_pose, lastpose, particles_position_before_update, particles_velocity_before_update, time_step)
 
         temp = 1
         for index, particle in enumerate(particles_position_before_update):
@@ -213,17 +219,17 @@ class RunParticle():
         self.state_est_history.append(state_est)
 
         # Update odometry step
-        print("state est:",state_est)
+        # print("state est:",state_est)
         print(f"Update # {self.num_updates}, Iteration runtime: {time.time() - start_time}")
 
         # # Update velocity with newest observation:
         # self.filter.update_vel(current_pose,timestep)
         # Update velocity with newest observation:
-        self.filter.update_vel(particles_position_before_update,current_pose,position_est, lastpose,timestep)
+        # self.filter.update_vel(particles_position_before_update,current_pose,position_est, lastpose,time_step)
 
-        return state_est
+        return state_est,velest
     
-
+#######################################################################################################################################
 if __name__ == "__main__":
 
     simple_trajx = np.arange(0,100,1).reshape(100,1)
