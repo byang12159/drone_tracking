@@ -12,11 +12,89 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 from particle_main import RunParticle
 import traceback
-
+import random
 from controller_m.gen_traj import Generate
 from perception.perception import Perception
+from simple_excitation import excitation
 lead = "Drone_L"
 chase = "Drone_C"
+
+def compute_cam_bound(depth):
+    # Given FOV of pinhole camera and distance from camera, computes the rectangle range of observable image
+    fov_h = 100 #degrees
+    fov_d = 138 #degrees
+
+    rec_width = 2 * (np.tan(np.deg2rad(fov_h/2)) * depth )
+    b = 2 * (np.tan(np.deg2rad(fov_d/2)) * depth )
+    rec_height = np.sqrt(b**2 - rec_width**2)
+
+    return rec_width,rec_height
+
+
+def plot_rec(ax, min_x,max_x,min_y,max_y,min_z,max_z):
+    x = [min_x, max_x, max_x, min_x, min_x, max_x, max_x, min_x]
+    y = [min_y, min_y, max_y, max_y, min_y, min_y, max_y, max_y]
+    z = [min_z, min_z, min_z, min_z, max_z, max_z, max_z, max_z]
+
+    # Define connections between the corner points
+    connections = [
+        [0, 1], [1, 2], [2, 3], [3, 0],
+        [4, 5], [5, 6], [6, 7], [7, 4],
+        [0, 4], [1, 5], [2, 6], [3, 7]
+    ]
+
+    # Plot wireframe
+    for connection in connections:
+        ax.plot([x[connection[0]], x[connection[1]]],
+                [y[connection[0]], y[connection[1]]],
+                [z[connection[0]], z[connection[1]]], 'k-', color='red')
+
+
+def prediction(initial_state, timestep, steps):
+    num_trajectory = 100
+    total_trajectories=[]
+
+    fig = plt.figure(1)
+    ax = fig.add_subplot(111, projection='3d')
+
+    # Generate Trajectories
+    for i in range(num_trajectory):
+        trajectory = [initial_state]
+        for s in range(steps):
+            a = np.random.uniform(-3.0, 3.0, size=3)
+            v = trajectory[-1][3:6] + a * timestep
+            p = trajectory[-1][:3] + v * timestep
+            trajectory.append([p[0], p[1], p[2], v[0], v[1], v[2], a[0],a[1],a[2]])
+
+        total_trajectories.append(trajectory)
+        trajectory=np.array(trajectory)
+        ax.plot(trajectory[:,0], trajectory[:,1], trajectory[:,2], color='b')
+    
+
+    # Find Hyper-rectangles of Trajectories
+    total_trajectories=np.array(total_trajectories)
+    rectangle = []
+    for s in range(steps+1):
+        min_x = np.min(total_trajectories[:,s,0])
+        max_x = np.max(total_trajectories[:,s,0])
+        min_y = np.min(total_trajectories[:,s,1])
+        max_y = np.max(total_trajectories[:,s,1])
+        min_z = np.min(total_trajectories[:,s,2])
+        max_z = np.max(total_trajectories[:,s,2])
+        rectangle.append([min_x,max_x,min_y,max_y,min_z,max_z])
+
+        plot_rec(ax, min_x,max_x,min_y,max_y,min_z,max_z)
+
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
+    plt.show
+
+
+
+
+
+
 
 # connect to the AirSim simulator
 client = airsim.MultirotorClient()
@@ -93,6 +171,8 @@ GT_state_history_y=[]
 GT_state_history_z=[]
 total_vest=[]
 
+GT_state_history=[]
+particle_state_est=[[0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0]]
 
 PF_history_x.append(np.array(mcl.filter.particles['position'][:,0]).flatten())
 PF_history_y.append(np.array(mcl.filter.particles['position'][:,1]).flatten())
@@ -101,11 +181,12 @@ PF_history_z.append(np.array(mcl.filter.particles['position'][:,2]).flatten())
 # Assume constant time step between trajectory stepping
 timestep = 0.1
 oldpositions= lead_pose1
-totalcount = 120
+oldvelocity = [0,0,0]
+totalcount = 100
 start_time = time.time()
 
 def random_traj(i,total_count):
-    x= 2* np.sin(i* 2*np.pi/total_count)
+    x= 3* np.sin(i* 2*np.pi/total_count)
     y= np.cos(i* 2*np.pi/total_count)
     z= 0.5*np.sin(i* 2*np.pi/total_count)
     return x,y,z
@@ -118,34 +199,36 @@ def circle_traj(i,total_count):
     y = lead_pose1[1]-radius * np.sin(i* 2*np.pi/total_count)
     z= lead_pose1[2]
     return x,y,z
+
+effort = excitation(2,2)
 try:
 
     while True:
         dt_move = 2
         # Lead Drone Movement ###################################################################################################################
         # client.moveByVelocityAsync(1,0,0,dt_move,vehicle_name=lead)
-        effortx,efforty,effortz = random_traj(count,totalcount)
-        client.moveByVelocityBodyFrameAsync(effortx, efforty, effortz, timestep, vehicle_name = lead)
+        # effortx,efforty,effortz = random_traj(count,totalcount)
+        # if count >= 50:
+        #     client.moveByVelocityBodyFrameAsync(6, 0, 0, timestep, vehicle_name = lead)
+        # else:
+        #     client.moveByVelocityBodyFrameAsync(3, 0, 0, timestep, vehicle_name = lead)
+        client.moveByVelocityBodyFrameAsync(effort[count], 0, 0, timestep, vehicle_name = lead)
 
         # identify location of lead
         # lead_pose = [client.simGetVehiclePose(lead).position.x_val, client.simGetVehiclePose(lead).position.y_val, client.simGetVehiclePose(lead).position.z_val]
         lead_pose = [client.simGetVehiclePose(lead).position.x_val, client.simGetVehiclePose(lead).position.y_val,client.simGetVehiclePose(lead).position.z_val]
         # print("Lead position",lead_pose)
 
-        state_est,velest = mcl.rgb_run(current_pose=lead_pose, time_step=0.1, lastpose=oldpositions)   
+        state_est = mcl.rgb_run(current_pose=lead_pose, past_states = particle_state_est, last_vel= oldvelocity , time_step=0.1)   
         oldpositions = state_est[:3]
+        oldvelocity = state_est[3:6]
         
-        total_vest.append(velest)
-        GT_state_history_x.append(lead_pose[0])
-        GT_state_history_y.append(lead_pose[1])
-        GT_state_history_z.append(lead_pose[2])
-        
-        pose_est_history_x.append(state_est[0])
-        pose_est_history_y.append(state_est[1])
-        pose_est_history_z.append(state_est[2])
-        velocity_est_history_x.append(state_est[3])
-        velocity_est_history_y.append(state_est[4])
-        velocity_est_history_z.append(state_est[5])
+        # if count == 50:
+        #     prediction(state_est, timestep=0.1, steps=10    )
+
+       
+        GT_state_history.append(lead_pose)
+        particle_state_est.append(state_est)
 
         PF_history_x.append(np.array(mcl.filter.particles['position'][:,0]).flatten())
         PF_history_y.append(np.array(mcl.filter.particles['position'][:,1]).flatten())
@@ -159,54 +242,66 @@ try:
         if count == totalcount:
             break
 
-    pose_est_history_x=np.array(pose_est_history_x)
-    pose_est_history_y=np.array(pose_est_history_y)
-    pose_est_history_z=np.array(pose_est_history_z)
+    GT_state_history = np.array(GT_state_history)
+    particle_state_est = np.array(particle_state_est)
     PF_history_x = np.array(PF_history_x)
     PF_history_y = np.array(PF_history_y)
     PF_history_z = np.array(PF_history_z)
-    GT_state_history_x = np.array(GT_state_history_x)
-    GT_state_history_y = np.array(GT_state_history_y)
-    GT_state_history_z = np.array(GT_state_history_z)
-    total_vest=np.array(total_vest)
     # print(GT_state_history.shape)
     # print(pose_est_history_x)
 
-    times = np.arange(0,len(pose_est_history_x))*timestep
-    velocity_GT_x = (GT_state_history_x[1:]-GT_state_history_x[:-1])/timestep
-    velocity_GT_y = (GT_state_history_y[1:]-GT_state_history_y[:-1])/timestep
-    velocity_GT_z = (GT_state_history_z[1:]-GT_state_history_z[:-1])/timestep
+    times = np.arange(0,particle_state_est.shape[0]-2)*timestep
+    velocity_GT_x = (GT_state_history[1:,0]-GT_state_history[:-1,0])/timestep
+    velocity_GT_y = (GT_state_history[1:,1]-GT_state_history[:-1,1])/timestep
+    velocity_GT_z = (GT_state_history[1:,2]-GT_state_history[:-1,2])/timestep
 
-    fig, (posx,posy,posz) = plt.subplots(3, 1, figsize=(14, 10))
-    posx.plot(times, pose_est_history_x, label = "Filter Pos x")
-    posx.plot(times, GT_state_history_x, label = "GT Pos x")
-    # posx.set_ylim(-1,1)
+    accel_GT_x = (velocity_GT_x[1:]-velocity_GT_x[:-1])/timestep
+    accel_GT_y = (velocity_GT_y[1:]-velocity_GT_y[:-1])/timestep
+    accel_GT_z = (velocity_GT_z[1:]-velocity_GT_z[:-1])/timestep
+
+    # fig, (posx,posy,posz) = plt.subplots(3, 1, figsize=(14, 10))
+    # posx.plot(times, particle_state_est[:,0], label = "Filter Pos x")
+    # posx.plot(times, GT_state_history[:,0], label = "GT Pos x")
+    # posx.legend()
+    # posy.plot(times, particle_state_est[:,1], label = "Filter Pos y")    
+    # posy.plot(times, GT_state_history[:,1], label = "GT Pos y")
+    # posy.legend()
+    # posz.plot(times, particle_state_est[:,2], label = "Filter Pos z")
+    # posz.plot(times, GT_state_history[:,2], label = "GT Pos z")
+    # posz.legend()
+
+    # fig, (velx,vely,velz) = plt.subplots(3, 1, figsize=(14, 10))
+    # velx.plot(times, particle_state_est[:,3], label = "Filter Vel x")
+    # velx.plot(times[1:], velocity_GT_x, label = "GT Vel x")
+    # # velx.set_ylim(-1,2)
+    # velx.legend()
+    # vely.plot(times, particle_state_est[:,4], label = "Filter Vel y")    
+    # vely.plot(times[1:], velocity_GT_y, label = "GT Vel y")
+    # vely.legend()
+    # velz.plot(times, particle_state_est[:,5], label = "Filter Vel z")
+    # velz.plot(times[1:], velocity_GT_z, label = "GT Vel z")
+    # velz.legend()
+
+    fig, (posx,velx,accelx) = plt.subplots(3, 1, figsize=(14, 10))
+    posx.plot(times, particle_state_est[2:,0], label = "Filter Pos x")
+    posx.plot(times, GT_state_history[:,0], label = "GT Pos x")
     posx.legend()
-    posy.plot(times, pose_est_history_y, label = "Filter Pos y")    
-    posy.plot(times, GT_state_history_y, label = "GT Pos y")
-    posy.legend()
-    posz.plot(times, pose_est_history_z, label = "Filter Pos z")
-    posz.plot(times, GT_state_history_z, label = "GT Pos z")
-    posz.legend()
-
-    fig, (velx,vely,velz) = plt.subplots(3, 1, figsize=(14, 10))
-    velx.plot(times, velocity_est_history_x, label = "Filter Vel x")
+    velx.plot(times, particle_state_est[2:,3], label = "Filter Vel x")
     velx.plot(times[1:], velocity_GT_x, label = "GT Vel x")
-    # velx.set_ylim(-1,2)
     velx.legend()
-    vely.plot(times, velocity_est_history_y, label = "Filter Vel y")    
-    vely.plot(times[1:], velocity_GT_y, label = "GT Vel y")
-    vely.legend()
-    velz.plot(times, velocity_est_history_z, label = "Filter Vel z")
-    velz.plot(times[1:], velocity_GT_z, label = "GT Vel z")
-    velz.legend()
+    accelx.plot(times, particle_state_est[2:,6], label = "Filter acel x")    
+    accelx.plot(times[2:], accel_GT_x, label = "GT accel x")
+    accelx.legend()
     
-    fig, (velx,vely,velz) = plt.subplots(3, 1, figsize=(14, 10))
-    velx.plot(times, total_vest[:,0], label = "Filter Vel x")
-    vely.plot(times, total_vest[:,1], label = "Filter Vel y")    
-    velz.plot(times, total_vest[:,2], label = "Filter Vel z")
-    velz.legend()
+
     plt.show()
+    
+    # fig, (velx,vely,velz) = plt.subplots(3, 1, figsize=(14, 10))
+    # velx.plot(times, total_vest[:,0], label = "Filter Vel x")
+    # vely.plot(times, total_vest[:,1], label = "Filter Vel y")    
+    # velz.plot(times, total_vest[:,2], label = "Filter Vel z")
+    # velz.legend()
+    # plt.show()
 
     # fig = plt.figure(1)
     # ax = fig.add_subplot(111, projection='3d')

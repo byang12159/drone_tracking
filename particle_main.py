@@ -63,10 +63,10 @@ class RunParticle():
 
         self.format_particle_size = 0
         # bounds for particle initialization, meters + degrees
-        self.total_particle_states = 6
+        self.total_particle_states = 9
         self.filter_dimension = 3
-        self.min_bounds = {'px':-0.5,'py':-0.5,'pz':-0.5,'rz':-2.5,'ry':-179.0,'rx':-2.5,'pVx':-0.5,'pVy':-0.5,'pVz':-0.5}
-        self.max_bounds = {'px':0.5,'py':0.5,'pz':0.5,'rz':2.5,'ry':179.0,'rx':2.5,      'pVx':0.5, 'pVy':0.5, 'pVz':0.5}
+        self.min_bounds = {'px':-0.5,'py':-0.5,'pz':-0.5,'rz':-2.5,'ry':-179.0,'rx':-2.5,'pVx':-0.5,'pVy':-0.5,'pVz':-0.5,'Ax':-0.5,'Ay':-0.5,'Az':-0.5}
+        self.max_bounds = {'px':0.5,'py':0.5,'pz':0.5,'rz':2.5,'ry':179.0,'rx':2.5,      'pVx':0.5, 'pVy':0.5, 'pVz':0.5, 'Ax':0.5,'Ay':0.5,'Az':0.5}
 
         self.num_particles = 900
         
@@ -85,7 +85,8 @@ class RunParticle():
         # add initial pose estimate before 1st update step
         position_est = self.filter.compute_simple_position_average()
         velocity_est = self.filter.compute_simple_velocity_average()
-        state_est = np.concatenate((position_est, velocity_est))
+        accel_est = self.filter.compute_simple_accel_average()
+        state_est = np.concatenate((position_est, velocity_est, accel_est))
         print("state_est",state_est)
         self.state_est_history.append(state_est)
 
@@ -110,8 +111,8 @@ class RunParticle():
     def get_initial_distribution(self):
         # get distribution of particles from user, generate np.array of (num_particles, 6)
         self.initial_particles_noise = np.random.uniform(
-            np.array([self.min_bounds['px'], self.min_bounds['py'], self.min_bounds['pz'],self.min_bounds['pVx'], self.min_bounds['pVy'], self.min_bounds['pVz']]),
-            np.array([self.max_bounds['px'], self.max_bounds['py'], self.max_bounds['pz'],self.max_bounds['pVx'], self.max_bounds['pVy'], self.max_bounds['pVz']]),
+            np.array([self.min_bounds['px'], self.min_bounds['py'], self.min_bounds['pz'],self.min_bounds['pVx'], self.min_bounds['pVy'], self.min_bounds['pVz'],self.min_bounds['Ax'], self.min_bounds['Ay'], self.min_bounds['Az']]),
+            np.array([self.max_bounds['px'], self.max_bounds['py'], self.max_bounds['pz'],self.max_bounds['pVx'], self.max_bounds['pVy'], self.max_bounds['pVz'],self.max_bounds['Ax'], self.max_bounds['Ay'], self.max_bounds['Az']]),
             size = (self.num_particles, self.total_particle_states))
         
         # Dict of position + rotation, with position as np.array(300x6)
@@ -141,6 +142,7 @@ class RunParticle():
     def set_initial_particles(self):
         initial_positions =  np.zeros((self.num_particles, self.filter_dimension))
         initial_velocities = np.zeros((self.num_particles, self.filter_dimension))
+        initial_accels = np.zeros((self.num_particles, self.filter_dimension))
         
         for index, particle in enumerate(self.initial_particles_noise):
             # Initialize at origin location
@@ -152,14 +154,16 @@ class RunParticle():
             Vx = particle[3]
             Vy = particle[4]
             Vz = particle[5]
+            Accelx = particle[6]
+            Accely = particle[7]
+            Accelz = particle[8]
 
             # set positions
             initial_positions[index,:] = [x, y, z]
             initial_velocities[index,:] = [Vx, Vy, Vz]
-            # initial_positions[index] = x
-            # initial_velocities[index] = Vx
+            initial_accels[index,:] = [Accelx, Accely, Accelz]
 
-        return  {'position':initial_positions, 'velocity':initial_velocities}
+        return  {'position':initial_positions, 'velocity':initial_velocities, 'accel':initial_accels}
 
 
     def odometry_update(self,current_pose, system_time_interval ):
@@ -168,39 +172,47 @@ class RunParticle():
         # offset = system_time_interval*curr_state_est[3:]
         # offset = system_time_interval*curr_vel_est
         # coef = 0.7
-        coef = 1
         offsets=[]
         for i in range(self.num_particles):
             # offset = system_time_interval*self.filter.particles['velocity'][i]
-            offset = coef*system_time_interval*self.filter.particles['velocity'][i]
+            increment_vel = self.filter.particles['velocity'][i] + system_time_interval*self.filter.particles['accel'][i]
+            offset = system_time_interval*increment_vel
             offsets.append(offset)
             self.filter.particles['position'][i] += offset
         offsets = np.array(offsets)
         # return np.average(offsets)
     
-    def get_loss(self, current_pose, last_pose, particle_poses, particle_vel, time):
+    def get_loss(self, current_pose, current_vel, current_accel, particle_poses, particle_vel, particle_accel):
         losses = []
-        print("cur",current_pose,last_pose)
-        current_velocity = (np.array(current_pose)-np.array(last_pose))/time
+        # print("cur",current_pose,last_pose)
+
         for i, particle in enumerate(particle_poses):
-            loss = np.sqrt((current_pose[0]-particle[0])**2 + (current_pose[1]-particle[1])**2 + 0.5*(current_pose[2]-particle[2])**2 + 0.5*((current_velocity[0]-particle_vel[i][0])**2+ + (current_velocity[1]-particle_vel[i][1])**2+ + (current_velocity[2]-particle_vel[i][2])**2))
+            loss = np.sqrt((current_pose[0]-particle[0])**2 + (current_pose[1]-particle[1])**2 + (current_pose[2]-particle[2])**2 
+                           + 0.9*((current_vel[0]-particle_vel[i][0])**2+ + (current_vel[1]-particle_vel[i][1])**2+ + (current_vel[2]-particle_vel[i][2])**2) 
+                           + 0.7*((current_accel[0]-particle_accel[i][0])**2+ + (current_accel[1]-particle_accel[i][1])**2+ + (current_accel[2]-particle_accel[i][2])**2))
             # loss = np.sqrt((current_pose[0]-particle[0])**2 )
             losses.append(loss)
                    
         return losses
 
-    def rgb_run(self,current_pose, time_step, lastpose):
+    def rgb_run(self,current_pose, past_states, last_vel, time_step):
         start_time = time.time() 
 
         self.odometry_update(current_pose,time_step) 
         # make copies to prevent mutations
         particles_position_before_update = np.copy(self.filter.particles['position'])
         particles_velocity_before_update = np.copy(self.filter.particles['velocity'])
+        particles_accel_before_update    = np.copy(self.filter.particles['accel'])
 
-        velest = np.mean(particles_velocity_before_update,axis=0)
+        # velest = np.mean(particles_velocity_before_update,axis=0)
+        # acelest = np.mean(particles_accel_before_update,axis=0)
 
 
-        losses = self.get_loss(current_pose, lastpose, particles_position_before_update, particles_velocity_before_update, time_step)
+        # current_velocity     = (np.array(current_pose)-np.array(past_states[-1][:3]))/time_step
+        # current_acceleration = (np.array(current_velocity)-np.array(past_states[-1][3:6]))/time_step
+        current_velocity     = (np.array(current_pose)-np.array(past_states[-1][:3]))/time_step
+        current_acceleration = (np.array(past_states[-1][3:6])-np.array(past_states[-2][3:6]))/time_step
+        losses = self.get_loss(current_pose, current_velocity, current_acceleration, particles_position_before_update, particles_velocity_before_update, particles_accel_before_update)
 
         temp = 1
         for index, particle in enumerate(particles_position_before_update):
@@ -209,12 +221,11 @@ class RunParticle():
         # Resample Weights
         self.filter.update()
         self.num_updates += 1
-        
-
 
         position_est = self.filter.compute_weighted_position_average()
         velocity_est = self.filter.compute_weighted_velocity_average()
-        state_est = np.concatenate((position_est, velocity_est))
+        accel_est = self.filter.compute_weighted_accel_average()
+        state_est = np.concatenate((position_est, velocity_est, accel_est))
 
         self.state_est_history.append(state_est)
 
@@ -227,7 +238,7 @@ class RunParticle():
         # Update velocity with newest observation:
         # self.filter.update_vel(particles_position_before_update,current_pose,position_est, lastpose,time_step)
 
-        return state_est,velest
+        return state_est
     
 #######################################################################################################################################
 if __name__ == "__main__":

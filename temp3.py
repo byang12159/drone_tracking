@@ -1,70 +1,23 @@
-# import numpy as np
-# import matplotlib.pyplot as plt
-# from scipy.interpolate import UnivariateSpline
-
-# # Sample data for demonstration
-# x = np.linspace(0, 10, 100)
-# y = np.sin(x)
-
-# # Fit a spline curve to the data
-# spline = UnivariateSpline(x, y)
-
-# # Generate points along the spline curve
-# x_points = np.linspace(0, 10, 1000)
-# y_points = spline(x_points)
-
-# # Calculate tangent vectors
-# t_values = np.linspace(0, 10, 20)  # Choose parameter values where you want to evaluate the tangent vectors
-# tangent_vectors = spline.derivative(n=1)(t_values)
-# print(tangent_vectors)
-# # Plot the spline curve
-# plt.plot(x_points, y_points, label='Spline Curve')
-
-# # Plot tangent vectors
-# for i in range(len(t_values)):
-#     tangent = tangent_vectors[i]
-#     print(tangent)
-#     tangent /= np.linalg.norm(tangent)  # Normalize the tangent vector for plotting
-#     plt.arrow(x_points[i], y_points[i], tangent[0], tangent[1], color='red', head_width=0.1, length_includes_head=True)
-
-# plt.xlabel('X')
-# plt.ylabel('Y')
-# plt.title('Spline Curve and Tangent Vectors')
-# plt.legend()
-# plt.grid(True)
-# plt.show()
-
-
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.animation import FuncAnimation
+from mpl_toolkits.mplot3d import Axes3D
 
-# Create a figure and axis
-fig, ax = plt.subplots()
-xdata, ydata = [], []
-ln, = plt.plot([], [], 'ro')  # Create an empty plot to be updated later
+# Generate sample data
+x = np.linspace(-5, 5, 100)
+y = np.linspace(-5, 5, 100)
+x, y = np.meshgrid(x, y)
+z = np.sin(np.sqrt(x**2 + y**2))
 
-# Set axis limits
-ax.set_xlim(0, 10)
-ax.set_ylim(-1, 1)
+# Create 3D plot
+fig = plt.figure()
+ax = fig.add_subplot(111, projection='3d')
+ax.plot_surface(x, y, z, cmap='viridis')
 
-# Initialization function: plot the background of each frame
-def init():
-    ln.set_data([], [])
-    return ln,
+# Add labels and title
+ax.set_xlabel('X')
+ax.set_ylabel('Y')
+ax.set_zlabel('Z')
+ax.set_title('3D Plot of sin(sqrt(x^2 + y^2))')
 
-# Update function: called for each frame with the next set of data points
-def update(frame):
-    xdata.append(frame)
-    ydata.append(np.sin(frame))
-    ln.set_data(xdata, ydata)
-    return ln,
-
-# Generate frames for animation
-frames = np.linspace(0, 10, 100)
-
-# Create the animation
-ani = FuncAnimation(fig, update, frames=frames, init_func=init, blit=True)
-
-# Show the animation
+# Show plot
 plt.show()

@@ -83,7 +83,13 @@ class ParticleFilter:
 
         vel_noise_level = 0.5
         vel_noise = np.random.uniform(-vel_noise_level, vel_noise_level, size=(self.num_particles, 3)) 
-        temp = {'position':np.copy(self.particles['position'])[choice, :]+total_noise, 'velocity':np.copy(self.particles['velocity'])[choice,:]+vel_noise}
+
+        accel_noise_level = 0.1
+        accel_noise = np.random.uniform(-accel_noise_level, accel_noise_level, size=(self.num_particles, 3)) 
+
+        temp = {'position':np.copy(self.particles['position'])[choice, :]+total_noise, 
+                'velocity':np.copy(self.particles['velocity'])[choice,:]+vel_noise,
+                'accel':np.copy(self.particles['accel'])[choice,:]+accel_noise}
 
         self.particles = temp
 
@@ -105,6 +111,11 @@ class ParticleFilter:
         # Simple averaging does not use weighted average or k means.
         avg_velocity = np.average(self.particles['velocity'], axis=0)
         return avg_velocity
+    
+    def compute_simple_accel_average(self):
+        # Simple averaging does not use weighted average or k means.
+        avg_accel = np.average(self.particles['accel'], axis=0)
+        return avg_accel
 
     def compute_weighted_position_average(self):
         avg_pose = np.average(self.particles['position'], weights=self.weights, axis=0)
@@ -113,6 +124,10 @@ class ParticleFilter:
     def compute_weighted_velocity_average(self):
         avg_velocity = np.average(self.particles['velocity'], weights=self.weights, axis=0)
         return avg_velocity
+    
+    def compute_weighted_accel_average(self):
+        avg_accel = np.average(self.particles['accel'], weights=self.weights, axis=0)
+        return avg_accel
     
     def compute_simple_rotation_average(self):
         # Simple averaging does not use weighted average or k means.
