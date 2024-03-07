@@ -7,7 +7,7 @@ import cv2
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 import pickle
-
+from samplecircle import samplecircle
 # data = {"name": "John", "age": 30}
 
 
@@ -41,15 +41,13 @@ def plot_rec(ax, min_x,max_x,min_y,max_y,min_z,max_z):
     for connection in connections:
         ax.plot([x[connection[0]], x[connection[1]]],
                 [y[connection[0]], y[connection[1]]],
-                [z[connection[0]], z[connection[1]]], '-', color='red')
-
-
+                [z[connection[0]], z[connection[1]]], '-')
 def prediction(initial_state, timestep, steps, camera_depth,accel_range):
-    num_trajectory = 200
+    num_trajectory = 100
     total_trajectories=[]
 
-    # fig = plt.figure(1)
-    # ax = fig.add_subplot(111, projection='3d')
+    fig = plt.figure(1)
+    ax = fig.add_subplot(111, projection='3d')
 
     # Generate Trajectories
     for i in range(num_trajectory):
@@ -62,7 +60,7 @@ def prediction(initial_state, timestep, steps, camera_depth,accel_range):
 
         total_trajectories.append(trajectory)
         trajectory=np.array(trajectory)
-        # ax.plot(trajectory[:,0], trajectory[:,1], trajectory[:,2], color='b')
+        ax.plot(trajectory[:,0], trajectory[:,1], trajectory[:,2], color='b')
     
 
     # Find Hyper-rectangles of Trajectories
@@ -92,13 +90,13 @@ def prediction(initial_state, timestep, steps, camera_depth,accel_range):
             max_z = rectangle[-1][5]
         rectangle.append([min_x,max_x,min_y,max_y,min_z,max_z])
 
-        # plot_rec(ax, min_x,max_x,min_y,max_y,min_z,max_z)
+        plot_rec(ax, min_x,max_x,min_y,max_y,min_z,max_z)
 
     # plot_rec(ax, 0,1,-bound_y/2,bound_y/2,-bound_z/2,bound_y/2)
-    # ax.set_xlabel('X')
-    # ax.set_ylabel('Y')
-    # ax.set_zlabel('Z')
-    # plt.show
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel("Z")
+    plt.show()
 
     return len(rectangle)
 
@@ -112,21 +110,25 @@ if __name__ == "__main__":
     total_steps_predict = []
     total_d = []
 
-    for v in variable_V:
+    variable_Vx,variable_Vy,variable_Vz = samplecircle()
+    ######################################
+    for v in range(len(variable_Vx)):
         print("current v:",v)
         
-        initial_V = v
+        # initial_V = v
         timestep = 0.1
 
         initalstate = np.zeros(9)
-        initalstate[3]=initial_V
+        initalstate[3]=2
+        # initalstate[4]=variable_Vy[v]
+        # initalstate[5]=variable_Vz[v]
 
         d = np.linspace(0,3,50)
         steps_predict = []
         for i in d:
             num_steps = prediction(initial_state=initalstate, timestep=timestep,steps=30, camera_depth=i, accel_range=5)
             steps_predict.append(num_steps)
-            
+            plt.show()
         total_steps_predict.append(steps_predict)
         total_d.append(d)
         # plt.plot(d,steps_predict)
@@ -144,16 +146,16 @@ if __name__ == "__main__":
     # with open("data_variableV_44a.pkl", "wb") as file:
     #     pickle.dump(data, file) 
 
-    for i in range(len(variable_V)):
-        plt.plot(total_d[i],0.1*np.array(total_steps_predict[i]),'-', label=f"V: {variable_V[i]}")
+    for i in range(len(variable_Vx)):
+        plt.plot(total_d[i],0.1*np.array(total_steps_predict[i]),'-', label=f"V: {variable_Vx[i],variable_Vy[i],variable_Vz[i]}")
         
     plt.xlabel("Target  Distance from Camera (m)")
     plt.ylabel("Future Time Within Cam Bounds (s)")
-    plt.title("System timstep:0.1s, Varying Velocity, max Accel:+-5m/s^2")
-    plt.legend()
+    plt.title("System timstep:0.1s, Velocity 5m/s, max Accel:+-5m/s^2")
+    # plt.legend()
     plt.show()
 
-    # Varying Acceleration
+    # Varying Acceleration ######################################
     # for v in variable_A:
     #     print("current a:",v)
         

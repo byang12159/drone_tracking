@@ -186,7 +186,7 @@ totalcount = 100
 start_time = time.time()
 
 def random_traj(i,total_count):
-    x= 3* np.sin(i* 2*np.pi/total_count)
+    x= 2* np.sin(i* 2*np.pi/total_count)
     y= np.cos(i* 2*np.pi/total_count)
     z= 0.5*np.sin(i* 2*np.pi/total_count)
     return x,y,z
@@ -200,19 +200,20 @@ def circle_traj(i,total_count):
     z= lead_pose1[2]
     return x,y,z
 
-effort = excitation(2,2)
+# effort = excitation(2,2)
 try:
 
     while True:
         dt_move = 2
         # Lead Drone Movement ###################################################################################################################
         # client.moveByVelocityAsync(1,0,0,dt_move,vehicle_name=lead)
-        # effortx,efforty,effortz = random_traj(count,totalcount)
+        effortx,efforty,effortz = random_traj(count,totalcount)
+        client.moveByVelocityBodyFrameAsync(effortx,efforty,effortz, timestep, vehicle_name = lead)
         # if count >= 50:
         #     client.moveByVelocityBodyFrameAsync(6, 0, 0, timestep, vehicle_name = lead)
         # else:
         #     client.moveByVelocityBodyFrameAsync(3, 0, 0, timestep, vehicle_name = lead)
-        client.moveByVelocityBodyFrameAsync(effort[count], 0, 0, timestep, vehicle_name = lead)
+        # client.moveByVelocityBodyFrameAsync(effort[count], 0, 0, timestep, vehicle_name = lead)
 
         # identify location of lead
         # lead_pose = [client.simGetVehiclePose(lead).position.x_val, client.simGetVehiclePose(lead).position.y_val, client.simGetVehiclePose(lead).position.z_val]
