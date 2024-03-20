@@ -1,368 +1,297 @@
 # ready to run example: PythonClient/multirotor/hello_drone.py
 # note: async methods take a long time to execute, add join() to wait for it finish 
 # NED coordinates: +x:forward +y:right +z:down
-# todo:
-# 1) set global coordinate, zero origin
+
 import airsim
 import os
 import time
 import numpy as np
 import cv2
 import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
+from mpl_toolkits.mplot3d import Axes3D 
 from particle_main import RunParticle
 import traceback
 import random
 from controller_m.gen_traj import Generate
 from perception.perception import Perception
 from simple_excitation import excitation
-lead = "Drone_L"
-chase = "Drone_C"
+import threading
 
-def compute_cam_bound(depth):
-    # Given FOV of pinhole camera and distance from camera, computes the rectangle range of observable image
-    fov_h = 100 #degrees
-    fov_d = 138 #degrees
-
-    rec_width = 2 * (np.tan(np.deg2rad(fov_h/2)) * depth )
-    b = 2 * (np.tan(np.deg2rad(fov_d/2)) * depth )
-    rec_height = np.sqrt(b**2 - rec_width**2)
-
-    return rec_width,rec_height
-
-
-def plot_rec(ax, min_x,max_x,min_y,max_y,min_z,max_z):
-    x = [min_x, max_x, max_x, min_x, min_x, max_x, max_x, min_x]
-    y = [min_y, min_y, max_y, max_y, min_y, min_y, max_y, max_y]
-    z = [min_z, min_z, min_z, min_z, max_z, max_z, max_z, max_z]
-
-    # Define connections between the corner points
-    connections = [
-        [0, 1], [1, 2], [2, 3], [3, 0],
-        [4, 5], [5, 6], [6, 7], [7, 4],
-        [0, 4], [1, 5], [2, 6], [3, 7]
-    ]
-
-    # Plot wireframe
-    for connection in connections:
-        ax.plot([x[connection[0]], x[connection[1]]],
-                [y[connection[0]], y[connection[1]]],
-                [z[connection[0]], z[connection[1]]], 'k-', color='red')
-
-
-def prediction(initial_state, timestep, steps):
-    num_trajectory = 100
-    total_trajectories=[]
-
-    fig = plt.figure(1)
-    ax = fig.add_subplot(111, projection='3d')
-
-    # Generate Trajectories
-    for i in range(num_trajectory):
-        trajectory = [initial_state]
-        for s in range(steps):
-            a = np.random.uniform(-3.0, 3.0, size=3)
-            v = trajectory[-1][3:6] + a * timestep
-            p = trajectory[-1][:3] + v * timestep
-            trajectory.append([p[0], p[1], p[2], v[0], v[1], v[2], a[0],a[1],a[2]])
-
-        total_trajectories.append(trajectory)
-        trajectory=np.array(trajectory)
-        ax.plot(trajectory[:,0], trajectory[:,1], trajectory[:,2], color='b')
-    
-
-    # Find Hyper-rectangles of Trajectories
-    total_trajectories=np.array(total_trajectories)
-    rectangle = []
-    for s in range(steps+1):
-        min_x = np.min(total_trajectories[:,s,0])
-        max_x = np.max(total_trajectories[:,s,0])
-        min_y = np.min(total_trajectories[:,s,1])
-        max_y = np.max(total_trajectories[:,s,1])
-        min_z = np.min(total_trajectories[:,s,2])
-        max_z = np.max(total_trajectories[:,s,2])
-        rectangle.append([min_x,max_x,min_y,max_y,min_z,max_z])
-
-        plot_rec(ax, min_x,max_x,min_y,max_y,min_z,max_z)
-
-    ax.set_xlabel('X')
-    ax.set_ylabel('Y')
-    ax.set_zlabel('Z')
-    plt.show
-
-
-
-
-
-
-
-# connect to the AirSim simulator
-client = airsim.MultirotorClient()
-client.confirmConnection()
-# client.reset()
-
-curr_state = client.simGetVehiclePose(lead)
-print("lead state", curr_state)
-# curr_state.position.z_val = 0
-# client.simSetVehiclePose(curr_state, True, lead)
-# time.sleep(2)
-# curr_state = client.simGetVehiclePose(lead)
-# print("lead state", curr_state)
-
-# curr_state2 = client.getMultirotorState(chase)
-# print("chaser state", curr_state2)
-
-client.enableApiControl(True,lead)
-client.armDisarm(True, lead)
-client.takeoffAsync(10.0, lead).join()
-
-client.enableApiControl(True,chase)
-client.armDisarm(True, chase)
-client.takeoffAsync(10.0, chase).join()
-
-# curr_state = client.getMultirotorState(lead)
-# print("lead state", curr_state)
-# curr_state2 = client.getMultirotorState(chase)
-# print("chaser state", curr_state2)
-
-# pose = client.simGetVehiclePose(lead)
-# print("lead state", pose.position)
-
-# Take picture ###################################################################################################################
-# vision = Perception(client)
-# img_rgb = vision.capture_RGB(client)
-# cv2.imshow("pic",img_rgb)
-# cv2.waitKey(0)
-# cv2.destroyAllWindows()
-
-# img_segment = vision.capture_segment(client)
-# cv2.imshow("pic",img_segment)
-# cv2.waitKey(0)
-# cv2.destroyAllWindows()
-
-# Chase Drone Movement ###################################################################################################################
+event = threading.Event()
+lock = threading.Lock()
 
 count = 0
-# lead_pose1 = [client.simGetVehiclePose(lead).position.x_val, client.simGetVehiclePose(lead).position.y_val, client.simGetVehiclePose(lead).position.z_val]
-lead_pose1 = [client.simGetVehiclePose(lead).position.x_val, client.simGetVehiclePose(lead).position.y_val,client.simGetVehiclePose(lead).position.z_val]
-print("Lead position",lead_pose1)
+class simulation():
+    def __init__(self, totalcount=100):
+        self.lead = "Drone_L"
+        self.chase = "Drone_C"
 
-mcl = RunParticle(starting_state=lead_pose1)    
+        # connect to the AirSim simulator
+        self.client1 = airsim.MultirotorClient()
+        self.client1.confirmConnection()
 
- 
-# Initialize mcl Position
-est_states = np.zeros((len(mcl.ref_traj) ,6)) # x y z vx vy vz
-gt_states  = np.zeros((len(mcl.ref_traj) ,16))
-iteration_count = np.arange(0,len(mcl.ref_traj) , 1, dtype=int)
+        self.client2 = airsim.MultirotorClient()
+        self.client2.confirmConnection()
 
-start_time = time.time()
+        self.client1.enableApiControl(True,self.lead)
+        self.client1.armDisarm(True, self.lead)
+        self.client1.takeoffAsync(30.0, self.lead).join()
 
-pose_est_history_x = []
-pose_est_history_y = []
-pose_est_history_z = []
-velocity_est_history_x = []
-velocity_est_history_y =[]
-velocity_est_history_z = []
-PF_history_x = []
-PF_history_y = []
-PF_history_z = []
-GT_state_history_x=[]
-GT_state_history_y=[]
-GT_state_history_z=[]
-total_vest=[]
-
-GT_state_history=[]
-particle_state_est=[[0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0]]
-
-PF_history_x.append(np.array(mcl.filter.particles['position'][:,0]).flatten())
-PF_history_y.append(np.array(mcl.filter.particles['position'][:,1]).flatten())
-PF_history_z.append(np.array(mcl.filter.particles['position'][:,2]).flatten())
-
-# Assume constant time step between trajectory stepping
-timestep = 0.1
-oldpositions= lead_pose1
-oldvelocity = [0,0,0]
-totalcount = 100
-start_time = time.time()
-
-def random_traj(i,total_count):
-    x= 2* np.sin(i* 2*np.pi/total_count)
-    y= np.cos(i* 2*np.pi/total_count)
-    z= 0.5*np.sin(i* 2*np.pi/total_count)
-    return x,y,z
-
-def circle_traj(i,total_count):
-    radius = 10
-    start=lead_pose1
-    t = np.linspace(0,2*np.pi,totalcount)
-    x = lead_pose1[0]-radius - radius * np.cos(i* 2*np.pi/total_count)
-    y = lead_pose1[1]-radius * np.sin(i* 2*np.pi/total_count)
-    z= lead_pose1[2]
-    return x,y,z
-
-# effort = excitation(2,2)
-try:
-
-    while True:
-        dt_move = 2
-        # Lead Drone Movement ###################################################################################################################
-        # client.moveByVelocityAsync(1,0,0,dt_move,vehicle_name=lead)
-        effortx,efforty,effortz = random_traj(count,totalcount)
-        client.moveByVelocityBodyFrameAsync(effortx,efforty,effortz, timestep, vehicle_name = lead)
-        # if count >= 50:
-        #     client.moveByVelocityBodyFrameAsync(6, 0, 0, timestep, vehicle_name = lead)
-        # else:
-        #     client.moveByVelocityBodyFrameAsync(3, 0, 0, timestep, vehicle_name = lead)
-        # client.moveByVelocityBodyFrameAsync(effort[count], 0, 0, timestep, vehicle_name = lead)
-
-        # identify location of lead
-        # lead_pose = [client.simGetVehiclePose(lead).position.x_val, client.simGetVehiclePose(lead).position.y_val, client.simGetVehiclePose(lead).position.z_val]
-        lead_pose = [client.simGetVehiclePose(lead).position.x_val, client.simGetVehiclePose(lead).position.y_val,client.simGetVehiclePose(lead).position.z_val]
-        # print("Lead position",lead_pose)
-
-        state_est = mcl.rgb_run(current_pose=lead_pose, past_states = particle_state_est, last_vel= oldvelocity , time_step=0.1)   
-        oldpositions = state_est[:3]
-        oldvelocity = state_est[3:6]
+        self.client1.enableApiControl(True,self.chase)
+        self.client1.armDisarm(True, self.chase)
+        self.client1.takeoffAsync(30.0, self.chase).join()
         
-        # if count == 50:
-        #     prediction(state_est, timestep=0.1, steps=10    )
-
-       
-        GT_state_history.append(lead_pose)
-        particle_state_est.append(state_est)
-
-        PF_history_x.append(np.array(mcl.filter.particles['position'][:,0]).flatten())
-        PF_history_y.append(np.array(mcl.filter.particles['position'][:,1]).flatten())
-        PF_history_z.append(np.array(mcl.filter.particles['position'][:,2]).flatten())
-
-        count += 1
-        curr_time = time.time()
-        print(f"Total simulation time: {round(curr_time-start_time,4)} sec")
-        time.sleep(timestep)
-
-        if count == totalcount:
-            break
-
-    GT_state_history = np.array(GT_state_history)
-    particle_state_est = np.array(particle_state_est)
-    PF_history_x = np.array(PF_history_x)
-    PF_history_y = np.array(PF_history_y)
-    PF_history_z = np.array(PF_history_z)
-    # print(GT_state_history.shape)
-    # print(pose_est_history_x)
-
-    times = np.arange(0,particle_state_est.shape[0]-2)*timestep
-    velocity_GT_x = (GT_state_history[1:,0]-GT_state_history[:-1,0])/timestep
-    velocity_GT_y = (GT_state_history[1:,1]-GT_state_history[:-1,1])/timestep
-    velocity_GT_z = (GT_state_history[1:,2]-GT_state_history[:-1,2])/timestep
-
-    accel_GT_x = (velocity_GT_x[1:]-velocity_GT_x[:-1])/timestep
-    accel_GT_y = (velocity_GT_y[1:]-velocity_GT_y[:-1])/timestep
-    accel_GT_z = (velocity_GT_z[1:]-velocity_GT_z[:-1])/timestep
-
-    # fig, (posx,posy,posz) = plt.subplots(3, 1, figsize=(14, 10))
-    # posx.plot(times, particle_state_est[:,0], label = "Filter Pos x")
-    # posx.plot(times, GT_state_history[:,0], label = "GT Pos x")
-    # posx.legend()
-    # posy.plot(times, particle_state_est[:,1], label = "Filter Pos y")    
-    # posy.plot(times, GT_state_history[:,1], label = "GT Pos y")
-    # posy.legend()
-    # posz.plot(times, particle_state_est[:,2], label = "Filter Pos z")
-    # posz.plot(times, GT_state_history[:,2], label = "GT Pos z")
-    # posz.legend()
-
-    # fig, (velx,vely,velz) = plt.subplots(3, 1, figsize=(14, 10))
-    # velx.plot(times, particle_state_est[:,3], label = "Filter Vel x")
-    # velx.plot(times[1:], velocity_GT_x, label = "GT Vel x")
-    # # velx.set_ylim(-1,2)
-    # velx.legend()
-    # vely.plot(times, particle_state_est[:,4], label = "Filter Vel y")    
-    # vely.plot(times[1:], velocity_GT_y, label = "GT Vel y")
-    # vely.legend()
-    # velz.plot(times, particle_state_est[:,5], label = "Filter Vel z")
-    # velz.plot(times[1:], velocity_GT_z, label = "GT Vel z")
-    # velz.legend()
-
-    fig, (posx,velx,accelx) = plt.subplots(3, 1, figsize=(14, 10))
-    posx.plot(times, particle_state_est[2:,0], label = "Filter Pos x")
-    posx.plot(times, GT_state_history[:,0], label = "GT Pos x")
-    posx.legend()
-    velx.plot(times, particle_state_est[2:,3], label = "Filter Vel x")
-    velx.plot(times[1:], velocity_GT_x, label = "GT Vel x")
-    velx.legend()
-    accelx.plot(times, particle_state_est[2:,6], label = "Filter acel x")    
-    accelx.plot(times[2:], accel_GT_x, label = "GT accel x")
-    accelx.legend()
-    
-
-    plt.show()
-    
-    # fig, (velx,vely,velz) = plt.subplots(3, 1, figsize=(14, 10))
-    # velx.plot(times, total_vest[:,0], label = "Filter Vel x")
-    # vely.plot(times, total_vest[:,1], label = "Filter Vel y")    
-    # velz.plot(times, total_vest[:,2], label = "Filter Vel z")
-    # velz.legend()
-    # plt.show()
-
-    # fig = plt.figure(1)
-    # ax = fig.add_subplot(111, projection='3d')
-    # # ax.plot(x, y, z, color='b')
-    # # t = np.linspace(0, 32, 1000)
-    # # x = mcl.ref_traj[:,0]
-    # # y = mcl.ref_traj[:,1]
-    # # z = mcl.ref_traj[:,2]
-    # plt.figure(1)
-    # # ax.plot(x,y,z, color = 'b')
-    # ax.plot(pose_est_history_x,pose_est_history_y,pose_est_history_z, '*',color = 'g',label='PF Estimate state')
-    # ax.plot(GT_state_history_x,GT_state_history_y,GT_state_history_z, color = 'r',label='GT state')
-    # ax.plot(lead_pose1[0],lead_pose1[1],lead_pose1[2],'*', color = 'b')
-    # ax.plot(PF_history_x[0],PF_history_y[0],PF_history_z[0],'*', color = 'b')
-    # ax.plot(PF_history_x[1],PF_history_y[1],PF_history_z[1],'*', color = 'purple')
-    # plt.legend()
-    # plt.show()
-
-    print("Finished")
-    client.reset()
-    client.armDisarm(False)
-
-    # that's enough fun for now. let's quit cleanly
-    client.enableApiControl(False)
-
-except Exception as e:
-    print("Error Occured, Canceling: ",e)
-    traceback.print_exc()
-
-    client.reset()
-    client.armDisarm(False)
-
-    # that's enough fun for now. let's quit cleanly
-    client.enableApiControl(False)
+        # Get global position of lead drone starting position
+        lead_pose = self.client1.simGetObjectPose(self.lead).position
+        lead_global = [lead_pose.x_val, lead_pose.y_val,lead_pose.z_val]
+        lead_pose = self.client1.simGetVehiclePose(self.lead).position
+        lead_NED = [lead_pose.x_val, lead_pose.y_val,lead_pose.z_val]
+        print("NED",lead_NED)
+        self.lead_diff = np.array(lead_NED) - np.array(lead_global)
+        print("differnece",self.lead_diff)
+        print("CAlcualed:",lead_global+self.lead_diff)
 
 
-# # client.moveToZAsync(10,2, vehicle_name=chase).join()
-# curr_state = client.simGetVehiclePose(chase)
-# print("chase state", curr_state)
+        chase_pose = self.client1.simGetObjectPose(self.chase).position
+        chase_global = [chase_pose.x_val, chase_pose.y_val,chase_pose.z_val]
+        chase_pose = self.client1.simGetVehiclePose(self.chase).position
+        chase_NED = [chase_pose.x_val, chase_pose.y_val,chase_pose.z_val]
+        self.chase_diff = np.array(chase_NED) - np.array(chase_global)
 
 
 
+        self.mcl = RunParticle(starting_state=lead_global)    
 
-# # Async methods returns Future. Call join() to wait for task to complete.
-# client.takeoffAsync().join()
-# client.moveToPositionAsync(-10, 10, -10, 5).join()
+        # Initialize mcl Position
+        self.est_states = np.zeros((len(self.mcl.ref_traj) ,6)) # x y z vx vy vz
+        self.gt_states  = np.zeros((len(self.mcl.ref_traj) ,16))
 
-# # take images
-# responses = client.simGetImages([
-#     airsim.ImageRequest("0", airsim.ImageType.DepthVis),
-#     airsim.ImageRequest("1", airsim.ImageType.DepthPlanar, True)])
-# print('Retrieved images: %d', len(responses))
+        pose_est_history_x = []
+        pose_est_history_y = []
+        pose_est_history_z = []
+        velocity_est_history_x = []
+        velocity_est_history_y =[]
+        velocity_est_history_z = []
+        self.PF_history_x = []
+        self.PF_history_y = []
+        self.PF_history_z = []
+        self.PF_history_x.append(np.array(self.mcl.filter.particles['position'][:,0]).flatten())
+        self.PF_history_y.append(np.array(self.mcl.filter.particles['position'][:,1]).flatten())
+        self.PF_history_z.append(np.array(self.mcl.filter.particles['position'][:,2]).flatten())
+ 
+        self.velocity_GT = []
+        self.accel_GT = []
 
-# # do something with the images
-# for response in responses:
-#     if response.pixels_as_float:
-#         print("Type %d, size %d" % (response.image_type, len(response.image_data_float)))
-#         airsim.write_pfm(os.path.normpath('py1.pfm'), airsim.get_pfm_array(response))
-#     else:
-#         print("Type %d, size %d" % (response.image_type, len(response.image_data_uint8)))
-#         airsim.write_file(os.path.normpath('py1.png'), response.image_data_uint8)
+        self.global_state_history_L=[]
+        self.global_state_history_C=[]
+        self.particle_state_est=[[0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0]]
+
+        # Assume constant time step between trajectory stepping
+        self.timestep = 0.1
+        self.totalcount = totalcount
+        self.start_time = time.time()
+
+    def global2NED(self,pose_global,vehicle_name):
+        if vehicle_name == "lead":
+            return 
+        else:
+            return 
+    def random_traj(self, i,total_count):
+        x= 2* np.sin(i* 2*np.pi/total_count)
+        y= np.cos(i*2*np.pi/total_count)
+        z= 0.5*np.sin(i* 2*np.pi/total_count)
+        return x,y,z
 
 
+    def move_lead(self):
+        global count 
+        client = self.client2
+        print("enter self.lead")
+        while True:
+            print("LEADER LOOP")
+            effortx,efforty,effortz = self.random_traj(count,self.totalcount)
+            
+            client.moveByVelocityBodyFrameAsync(0,efforty,0, self.timestep, vehicle_name = self.lead)
+            
+            curr_time = time.time()
+            print(f"Total simulation time: {round(curr_time-self.start_time,4)} sec")
+            
+            # time.sleep(self.timestep)
+            
+            with lock:
+                count += 1
+                if count >= self.totalcount:
+                    break
+
+            time.sleep(self.timestep)
+
+    def move_chase(self):
+        global count 
+        client = self.client1
+
+        def rotation_2d_z(angle, vector):
+            #angle is radian
+            R = np.array([[np.cos(angle),-np.sin(angle)],[np.sin(angle),np.cos(angle)]])
+            return R@vector
+        
+        def angle_between(v1, v2):
+            dot_product = np.dot(v1, v2)
+            magnitude_v1 = np.linalg.norm(v1)
+            magnitude_v2 = np.linalg.norm(v2)
+            angle_rad = np.arccos(dot_product / (magnitude_v1 * magnitude_v2))
+            angle_deg = np.degrees(angle_rad)
+            print("degrees diff ",angle_deg)
+            return angle_rad
+        
+        while True:
+            print("CHASER LOOP")
+            lead_pose = [client.simGetObjectPose(self.lead).position.x_val, client.simGetObjectPose(self.lead).position.y_val,client.simGetObjectPose(self.lead).position.z_val]
+            state_est = self.mcl.rgb_run(current_pose=lead_pose, past_states = self.particle_state_est, time_step=self.timestep)   
+            
+
+            lead_pose = [client.simGetObjectPose(self.lead).position.x_val,client.simGetObjectPose(self.lead).position.y_val,client.simGetObjectPose(self.lead).position.z_val]
+            chase_pose = [client.simGetObjectPose(self.chase).position.x_val,client.simGetObjectPose(self.chase).position.y_val,client.simGetObjectPose(self.chase).position.z_val]
+        
+            lead_kinematics = client.getMultirotorState(self.lead).kinematics_estimated
+            chase_kinematics = client.getMultirotorState(self.chase).kinematics_estimated
+
+            orient = rotation_2d_z(-chase_kinematics.orientation.z_val, np.array([1,0]))
+            vector2 = np.array([lead_pose[0]-chase_pose[0],lead_pose[1]-chase_pose[1]])
+            print(f"orient: {orient}, vecotr2: {vector2}")
+            yaw_chase = -1*angle_between(orient, vector2)
+
+            client.moveToPositionAsync(0, state_est[1]+self.chase_diff[1],state_est[2]+self.chase_diff[2],velocity=2, timeout_sec=self.timestep, yaw_mode=airsim.YawMode(False, yaw_chase),vehicle_name=self.chase)
+
+            self.global_state_history_L.append(lead_pose)
+            self.global_state_history_C.append(chase_pose)
+            self.particle_state_est.append(state_est)
+            self.velocity_GT.append([lead_kinematics.linear_velocity.x_val, 
+                                lead_kinematics.linear_velocity.y_val,
+                                lead_kinematics.linear_velocity.z_val])  
+            self.accel_GT.append([lead_kinematics.linear_acceleration.x_val,
+                                lead_kinematics.linear_acceleration.y_val,
+                                lead_kinematics.linear_acceleration.z_val])
+            self.PF_history_x.append(np.array(self.mcl.filter.particles['position'][:,0]).flatten())
+            self.PF_history_y.append(np.array(self.mcl.filter.particles['position'][:,1]).flatten())
+            self.PF_history_z.append(np.array(self.mcl.filter.particles['position'][:,2]).flatten())
+
+            with lock:
+                if count >= self.totalcount:
+                    break
+            
+            time.sleep(self.timestep)
+
+    def processing(self):
+        self.global_state_history_L = np.array(self.global_state_history_L)
+        self.global_state_history_C = np.array(self.global_state_history_C)
+        self.particle_state_est = np.array(self.particle_state_est)
+        
+        self.PF_history_x = np.array(self.PF_history_x)
+        self.PF_history_y = np.array(self.PF_history_y)
+        self.PF_history_z = np.array(self.PF_history_z)
+
+        self.velocity_GT= np.array(self.velocity_GT)
+        self.accel_GT = np.array(self.accel_GT)
+
+        times = np.arange(0,self.particle_state_est.shape[0]-2)*self.timestep
+
+
+        # fig, (posx,posy,posz) = plt.subplots(3, 1, figsize=(14, 10))
+        # posx.plot(times, particle_state_est[2:,0], label = "Filter Pos x")
+        # posx.plot(times, global_state_history_L[:,0], label = "GT Pos x")
+        # posx.legend()
+        # posy.plot(times, particle_state_est[2:,1], label = "Filter Pos y")    
+        # posy.plot(times, global_state_history_L[:,1], label = "GT Pos y")
+        # posy.legend()
+        # posz.plot(times, particle_state_est[2:,2], label = "Filter Pos z")
+        # posz.plot(times, global_state_history_L[:,2], label = "GT Pos z")
+        # posz.legend()
+
+        # fig, (velx,vely,velz) = plt.subplots(3, 1, figsize=(14, 10))
+        # velx.plot(times, particle_state_est[2:,3], label = "Filter Vel x")
+        # velx.plot(times, velocity_GT[:,0], label = "GT Vel x")
+        # # velx.set_ylim(-1,2)
+        # velx.legend()
+        # vely.plot(times, particle_state_est[2:,4], label = "Filter Vel y")    
+        # vely.plot(times, velocity_GT[:,1], label = "GT Vel y")
+        # vely.legend()
+        # velz.plot(times, particle_state_est[2:,5], label = "Filter Vel z")
+        # velz.plot(times, velocity_GT[:,2], label = "GT Vel z")
+        # velz.legend()
+
+        # fig, (posx,velx,accelx) = plt.subplots(3, 1, figsize=(14, 10))
+        # posx.plot(times, particle_state_est[2:,0], label = "Filter Accel x")
+        # posx.plot(times, global_state_history_L[:,0], label = "GT Accel x")
+        # posx.legend()
+        # velx.plot(times, particle_state_est[2:,3], label = "Filter Accel y")
+        # velx.plot(times, velocity_GT[:,0], label = "GT Accel y")
+        # velx.legend()
+        # accelx.plot(times, particle_state_est[2:,6], label = "Filter Accel z")    
+        # accelx.plot(times, accel_GT[:,0], label = "GT Accel z")
+        # accelx.legend()
+
+        # plt.show()
+
+
+        fig = plt.figure(1)
+        ax = fig.add_subplot(111, projection='3d')
+        ax.plot(self.global_state_history_C[:,0],self.global_state_history_C[:,1],self.global_state_history_C[:,2], color='b')
+        ax.plot(self.particle_state_est[2:,0],self.particle_state_est[2:,1],self.particle_state_est[2:,2],'o',color='red')
+        ax.plot(self.global_state_history_L[:,0],self.global_state_history_L[:,1],self.global_state_history_L[:,2], '*',color = 'g')
+        plt.axis('equal')
+        plt.legend()
+        plt.show()
+
+
+
+if __name__ == "__main__":
+    sim = simulation()
+    threadL = threading.Thread(target=sim.move_lead, name='Thread lead')
+    threadC = threading.Thread(target=sim.move_chase, name='Thread Chase')
+
+    try:
+        print("###################################################################################### STARTING SIMULATION ##########################################################################")
+        # Start the threads
+        threadL.start()
+        threadC.start()
+
+        # Wait for both threads to finish
+        threadL.join()
+        threadC.join()
+
+        sim.processing()
+
+        print("Finished")       
+
+        sim.client1.reset()
+        sim.client1.armDisarm(False)
+        sim.client1.enableApiControl(False)
+        sim.client2.reset()
+        sim.client2.armDisarm(False)
+        sim.client2.enableApiControl(False)
+
+
+
+    except Exception as e:
+        print("Error Occured, Canceling: ",e)
+        traceback.print_exc()
+
+        sim.client1.reset()
+        sim.client1.armDisarm(False)
+        sim.client1.enableApiControl(False)
+        sim.client2.reset()
+        sim.client2.armDisarm(False)
+        sim.client2.enableApiControl(False)
+
+
+
+
+
+# def circle_traj(i,total_count):
+#     radius = 10
+#     start=lead_pose1
+#     t = np.linspace(0,2*np.pi,totalcount)
+#     x = lead_pose1[0]-radius - radius * np.cos(i* 2*np.pi/total_count)
+#     y = lead_pose1[1]-radius * np.sin(i* 2*np.pi/total_count)
+#     z= lead_pose1[2]
+#     return x,y,z

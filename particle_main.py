@@ -195,7 +195,7 @@ class RunParticle():
                    
         return losses
 
-    def rgb_run(self,current_pose, past_states, last_vel, time_step):
+    def rgb_run(self,current_pose, past_states, time_step):
         start_time = time.time() 
 
         self.odometry_update(current_pose,time_step) 
