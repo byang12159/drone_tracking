@@ -41,22 +41,18 @@ class simulation():
         self.client1.armDisarm(True, self.chase)
         self.client1.takeoffAsync(30.0, self.chase).join()
         
-        # Get global position of lead drone starting position
+        # Find Difference between global to NED coordinate frames
         lead_pose = self.client1.simGetObjectPose(self.lead).position
         lead_global = [lead_pose.x_val, lead_pose.y_val,lead_pose.z_val]
         lead_pose = self.client1.simGetVehiclePose(self.lead).position
         lead_NED = [lead_pose.x_val, lead_pose.y_val,lead_pose.z_val]
-        print("NED",lead_NED)
-        self.lead_diff = np.array(lead_NED) - np.array(lead_global)
-        print("differnece",self.lead_diff)
-        print("CAlcualed:",lead_global+self.lead_diff)
-
+        self.lead_coord_diff = np.array(lead_NED) - np.array(lead_global)
 
         chase_pose = self.client1.simGetObjectPose(self.chase).position
         chase_global = [chase_pose.x_val, chase_pose.y_val,chase_pose.z_val]
         chase_pose = self.client1.simGetVehiclePose(self.chase).position
         chase_NED = [chase_pose.x_val, chase_pose.y_val,chase_pose.z_val]
-        self.chase_diff = np.array(chase_NED) - np.array(chase_global)
+        self.chase_coord_diff = np.array(chase_NED) - np.array(chase_global)
 
 
 
@@ -92,10 +88,11 @@ class simulation():
         self.start_time = time.time()
 
     def global2NED(self,pose_global,vehicle_name):
-        if vehicle_name == "lead":
-            return 
+        if vehicle_name == "Drone_C":
+            return pose_global+self.lead_coord_diff
         else:
-            return 
+            return pose_global+self.chase_coord_diff
+        
     def random_traj(self, i,total_count):
         x= 2* np.sin(i* 2*np.pi/total_count)
         y= np.cos(i*2*np.pi/total_count)
@@ -160,7 +157,8 @@ class simulation():
             print(f"orient: {orient}, vecotr2: {vector2}")
             yaw_chase = -1*angle_between(orient, vector2)
 
-            client.moveToPositionAsync(0, state_est[1]+self.chase_diff[1],state_est[2]+self.chase_diff[2],velocity=2, timeout_sec=self.timestep, yaw_mode=airsim.YawMode(False, yaw_chase),vehicle_name=self.chase)
+            target_state = self.global2NED(state_est[:3],self.chase)
+            client.moveToPositionAsync(0, target_state[1], target_state[2], velocity=2, timeout_sec=self.timestep, yaw_mode=airsim.YawMode(False, yaw_chase),vehicle_name=self.chase)
 
             self.global_state_history_L.append(lead_pose)
             self.global_state_history_C.append(chase_pose)
