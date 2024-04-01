@@ -56,18 +56,59 @@ import numpy as np
 import cv2
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
-from particle_main import RunParticle
+# from particle_main import RunParticle
 import traceback
 import random
-from controller_m.gen_traj import Generate
-from perception.perception import Perception
-from simple_excitation import excitation
+# from controller_m.gen_traj import Generate
+# from perception.perception import Perception
+# from simple_excitation import excitation
 
 
 import matplotlib.animation as animation
 
-lead = "Drone_L"
 
+
+# def calculate_performance_metrics(position_history, settlingpoint, tolerance_percentage=2):
+
+#     pos_adj = position_history - position_history[0]
+#     peak = np.max(pos_adj)
+#     Mp = 100* (peak - settlingpoint) / settlingpoint   # Overshoot as percentage
+
+#     # Find time index where percent difference between current pos and settling point is less than predetermined tolerance 
+#     Ts_idx = np.where(np.abs(pos_adj - settlingpoint) <= tolerance_percentage / 100 * settlingpoint)[0][0]
+#     settling_time = Ts_idx * timestep  # Using Predefined tiemstep
+
+#     #Rise time
+#     Tr_idx = np.where(pos_adj >= 0.9 * settlingpoint)[0]
+#     rise_time = Tr_idx[0] * timestep  
+
+#     return Mp, settling_time, rise_time
+
+
+
+def calculate_performance_metrics(position_history, settlingpoint, tolerance_percentage=2, timestep=None):
+    pos_adj = position_history - position_history[0]  # Adjust by init pos
+    settling_time=0
+    rise_time=0
+    # overshoot
+    peak = np.max(pos_adj)
+    Mp = 100 * (peak - settlingpoint) / settlingpoint  # Mp percentage
+
+    # Check if timestep is provided for time-based metrics
+    if timestep > -np.inf:
+    # settling time
+        tolerance = tolerance_percentage / 100 * settlingpoint
+        Ts_idx = np.where(np.abs(pos_adj - settlingpoint) <= tolerance)[0]
+        settling_time = Ts_idx[0] * timestep  # First time where pos is within tolerance
+
+    # rise time
+        Tr_idx = np.where(pos_adj >= 0.9 * settlingpoint)[0]
+        rise_time = Tr_idx[0] * timestep  # First time where 90% of settling point is reached
+    return Mp, settling_time, rise_time
+
+
+
+lead = "Drone_L"
 if __name__ == "__main__":
 
 
@@ -88,16 +129,16 @@ if __name__ == "__main__":
     # print(f"1: {pos}, 2:{vel}, 3:{acel}")
  
     count = 0
-    totalcount = 1000
+    totalcount = 200
 
     # Initialize PID controller with desired gains and setpoint
     print("current pos",current_pos)
 
-    # Z Kp=8, Ki=0.0, Kd=12.0
+    # Z Kp=2, Ki=0.0, Kd=4.0
     # X: Kp=25, Ki=0.0, Kd=0,  testing: kd = 0.5 too much , 0.2 ok 
     # Y: Kp=25, Ki=0.0, Kd=0
-    pid_controller_x = PIDController_x(Kp=0.0, Ki=0.0, Kd=0, setpoint=10.0)
-    pid_controller_y = PIDController_y(Kp=0.0, Ki=0.0, Kd=0, setpoint=10.0)
+    pid_controller_x = PIDController_x(Kp=25, Ki=0.0, Kd=50.0, setpoint=10.0)
+    pid_controller_y = PIDController_y(Kp=25, Ki=0.0, Kd=50.0, setpoint=10.0)
     pid_controller_z = PIDController_z(Kp=2, Ki=0.0, Kd=4, setpoint=10.0)
     start_time = time.time()
     last_time = start_time
@@ -151,7 +192,7 @@ try:
 
         # Update the plot
         time_window =np.append(time_window[1:],(time_window[-1]+1))
-        position_window = np.append(position_window[1:],current_pos[2])
+        position_window = np.append(position_window[1:],current_pos[0])
         line.set_data(time_window, position_window)
         ax.relim()
     
@@ -162,20 +203,42 @@ try:
     print("Finished")
     client.reset()
     client.armDisarm(False)
-
+    setpoint=10.0
     # that's enough fun for now. let's quit cleanly
     client.enableApiControl(False)
 
     position_history=np.array(position_history)
+    # overshoot, settling_time, rise_time = calculate_performance_metrics(position_history, setpoint)
+    overshoot, settling_time, rise_time = calculate_performance_metrics(position_history, setpoint, 2, timestep)
+
+    print("Overshoot:", overshoot, "%")
+    print("Settling Time:", settling_time, "seconds")
+    print("Rise Time:", rise_time, "seconds")
+
     times = np.arange(0,position_history.shape[0])*timestep
     fig, (posx,posy,posz) = plt.subplots(3, 1, figsize=(14, 10))
+
     posx.plot(times, position_history[:,0], label = "Pos x")
     # posx.plot(times, GT_state_history[:,0], label = "GT Pos x")
     posx.legend()
+
+
     posy.plot(times, position_history[:,1], label = "Pos y")
+    posx.legend()
+
     # velx.plot(times[1:], velocity_GT_x, label = "GT Vel x")
     # velx.legend()
     posz.plot(times, position_history[:,2], label = "Pos z")    
+    
+
+    posx.axhline(y=setpoint, color='k', linestyle='--', label="Setpoint")  # setpoint line
+    posx.axhline(y=setpoint * (1 + overshoot / 100), color='r', linestyle='--', label="Overshoot")  # Mark overshoot
+    posx.axvline(x=rise_time, color='g', linestyle='--', label="Rise Time")  # Mark rise time
+    posx.axvline(x=settling_time, color='b', linestyle='--', label="Settling Time")  # Mark settling time
+    posx.legend()
+
+
+
     # accelx.plot(times[2:], accel_GT_x, label = "GT accel x")
     # accelx.legend()
     plt.show()
