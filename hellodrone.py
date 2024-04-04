@@ -17,6 +17,8 @@ from perception.perception import Perception
 from simple_excitation import excitation
 import threading
 
+from controller_pid import PIDController_x, PIDController_y, PIDController_z
+
 event = threading.Event()
 lock = threading.Lock()
 
@@ -40,6 +42,9 @@ class simulation():
         self.client1.enableApiControl(True,self.chase)
         self.client1.armDisarm(True, self.chase)
         self.client1.takeoffAsync(30.0, self.chase).join()
+
+        chase_kinematics = self.client1.getMultirotorState(self.chase).kinematics_estimated
+        print("KINEMATICS",chase_kinematics)
         
         # Find Difference between global to NED coordinate frames
         lead_pose = self.client1.simGetObjectPose(self.lead).position
@@ -53,8 +58,6 @@ class simulation():
         chase_pose = self.client1.simGetVehiclePose(self.chase).position
         chase_NED = [chase_pose.x_val, chase_pose.y_val,chase_pose.z_val]
         self.chase_coord_diff = np.array(chase_NED) - np.array(chase_global)
-
-
 
         self.mcl = RunParticle(starting_state=lead_global)    
 
