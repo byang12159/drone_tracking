@@ -1,9 +1,14 @@
 import numpy as np
 import pyvista as pv
 from PIL import Image
-import cv2 as cv
+import cv2
 import math
 from scipy.spatial.transform import Rotation as R
+import cv2.aruco as aruco
+import sys, os
+
+import pickle
+import time
 
 def quaternion_to_euler(w, x, y, z):
     # Calculate roll (x-axis rotation)
@@ -25,13 +30,94 @@ def quaternion_to_euler(w, x, y, z):
 
     return math.degrees(roll), math.degrees(pitch), math.degrees(yaw)
 
+def detect_aruco(cap=None, save="output1.png", visualize=True, marker_size=750):
+
+
+    # ret, frame = cap.read()
+    scale = 1
+    frame = cv2.imread("screenshot.png")
+    width = int(frame.shape[1] * scale)
+    height = int(frame.shape[0] * scale)
+    dim = (width, height)
+    frame = cv2.resize(frame, dim, interpolation = cv2.INTER_AREA)
+
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+    # aruco_dict = aruco.Dictionary_get(aruco.DICT_4X4_250)
+    # parameters = aruco.DetectorParameters_create()
+    # markerCorners, markerIds, rejectedCandidates= aruco.detectMarkers(gray, aruco_dict, parameters=parameters)
+    
+    aruco_dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_250)
+    parameters =  cv2.aruco.DetectorParameters()
+    detector = cv2.aruco.ArucoDetector(aruco_dictionary, parameters)
+    markerCorners, markerIds, rejectedCandidates= detector.detectMarkers(gray)
+   
+    frame = aruco.drawDetectedMarkers( frame, markerCorners, markerIds )
+    Ts = []
+    ids = []
+    #camera_mtx = np.array([[489.53842117,  0.,         307.82908611],
+                        # [  0. ,        489.98143193, 244.48380801],
+                        # [  0.   ,        0.         ,  1.        ]])
+    #camera_mtx = np.identity(3)
+    # camera_mtx = np.array([[1.95553717e+04, 0.00000000e+00, 5.14662975e+02],
+    #                       [0.00000000e+00, 5.61599540e+04, 3.33162595e+02],
+    #                       [0.00000000e+00, 0.00000000e+00, 1.00000000e+00]])
+    camera_mtx = np.array([[665.10751011,   0.        , 511.5],
+                          [  0.        , 665.10751011, 383.5],
+                          [  0.        ,   0.        ,   1. ]])
+#     camera_mtx = np.array([[678.57920529 ,  0.      ,   482.18115694],
+#  [  0.     ,    685.91554947, 375.83301486],
+#  [  0.   ,        0.    ,       1.        ]])
+    #distortion_param = np.array([[-3.69778027e+03, -1.23141160e-01,  1.46877989e+01, -7.97192259e-02, -3.28441832e-06]])
+    # distortion_param = np.array([[2.48770555e+00,  1.22911439e-02 , 2.98116458e-01, -3.75310299e-03, 1.86549660e-04]])
+    #distortion_param = np.array([[-0.04312776 , 0.32870159 ,-0.01099838, -0.01273789, -0.56414927]])
+    distortion_param = np.array([[0.0, 0.0, 0.0, 0.0, 0.0]])
+    if markerIds is not None:
+        rvecs, tvecs, objPoints = cv2.aruco.estimatePoseSingleMarkers(markerCorners, markerLength=marker_size, cameraMatrix=camera_mtx, distCoeffs=distortion_param)
+        # rvecs, tvecs, objpoints = aruco.estimatePoseSingleMarkers(markerCorners, marker_size, , )
+        for i in range(len(markerIds)):
+            # Unpacking the compounded list structure
+            rvec = rvecs[i][0]
+            tvec = tvecs[i][0]
+            # print("Rvec",rvec)
+            # print("Tvec",tvec)
+            ids.append(markerIds[i][0])
+            if save or visualize:
+
+                frame = cv2.drawFrameAxes(frame, camera_mtx, distortion_param, rvec, tvec,length = 100, thickness=6)
+        
+            rotation_mtx, jacobian = cv2.Rodrigues(rvec)
+            translation = tvec
+            
+            T = np.identity(4)
+            T[:3, :3] = rotation_mtx
+            T[:3, 3] = translation / 1000.
+            print(T)
+            Ts.append(T)
+
+    if save:
+        cv2.imwrite(save, frame)
+
+    if visualize:
+        
+        cv2.imshow("camera view", frame)
+
+
+    #print(markerIds)
+    # Multiple ids in 1D list
+    # Mutiple Ts, select first marker 2d array by Ts[0]
+
+    return Ts, ids
+
 # Define the positions
-leader_pos = np.array([10000.0, 0.0, 0.0])  # Leader position
+leader_pos = np.array([5000.0, 1000.0, 500.0])  # Leader position
 chaser_pos = np.array([0.0, 0.0, 0.0])  # Chaser position
 
 # Quaternions representing orientation
-leader_quat = [0.707, 0.707, 0, 0]
-#leader_quat = [1, 0, 0, 0]  # w, x, y, z for the leader
+# leader_quat = [0.707, 0.707, 0, 0]
+leader_quat = [1, 0, 0, 0]  # w, x, y, z for the leader
+#leader_quat = [0, 0, 0, 1]
+#leader_quat = [0.9238795,0, 0, 0.3826834]
 angles_l = np.array(quaternion_to_euler(*leader_quat))
 
 
@@ -57,17 +143,18 @@ rotated_pos = chaser_rotation_inv.apply(relative_pos)
 camera_frame_pos = [-rotated_pos[1], rotated_pos[2], rotated_pos[0]]
 
 R_rad = np.array(angles_rel) * math.pi / 180
-rotation_matrix = cv.Rodrigues(R_rad)[0]
+rotation_matrix = cv2.Rodrigues(R_rad)[0]
 # Your translation vector
 translation_vector = np.array(camera_frame_pos)  # Replace with your translation vector
-
+# print(translation_vector)
+# print(angles_rel)
 # Create a 4x4 transformation matrix
 transformation_matrix = np.eye(4)  # Initialize as identity matrix
 transformation_matrix[:3, :3] = rotation_matrix  # Set the top-left 3x3 to your rotation matrix
 transformation_matrix[:3, 3] = translation_vector  # Set the top-right 3x1 to your translation vector
 
 # Load the image
-image = Image.open('aruco2.png')  # Change 'example.jpg' to the path of your image
+image = Image.open('inverted_aruco2.png')  # Change 'example.jpg' to the path of your image
 
 # Convert the image to a numpy array
 image_array = np.array(image)
@@ -99,6 +186,7 @@ plotter.add_mesh(plane, texture=texture)
 # Adjust the camera settings as needed
 plotter.view_xy()
 plotter.set_position([0000, 0, 000])
+plotter.camera.focal_point = [0, 000, 1000]
 plotter.camera.view_angle = 60.0
 
 # Display the plot
@@ -106,3 +194,5 @@ plotter.show()
 
 # Save the screenshot
 plotter.screenshot('screenshot.png')
+detect_aruco()
+
