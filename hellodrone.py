@@ -17,14 +17,14 @@ from perception.perception import Perception
 from simple_excitation import excitation
 import threading
 
-from controller_pid import PIDController_x, PIDController_y, PIDController_z
+from controller_pid import PIDController
 
 event = threading.Event()
 lock = threading.Lock()
 
 count = 0
 class simulation():
-    def __init__(self, totalcount=100):
+    def __init__(self, totalcount=1000):
         self.lead = "Drone_L"
         self.chase = "Drone_C"
 
@@ -59,6 +59,8 @@ class simulation():
         chase_NED = [chase_pose.x_val, chase_pose.y_val,chase_pose.z_val]
         self.chase_coord_diff = np.array(chase_NED) - np.array(chase_global)
 
+        print(lead_pose)
+
         self.mcl = RunParticle(starting_state=lead_global)    
 
         # Initialize mcl Position
@@ -86,9 +88,16 @@ class simulation():
         self.particle_state_est=[[0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0]]
 
         # Assume constant time step between trajectory stepping
-        self.timestep = 0.1
+        self.timestep = 0.01
         self.totalcount = totalcount
         self.start_time = time.time()
+
+        # Initialize PID
+        gain_x = [20, 0, 80.0]
+        gain_y = [20, 0, 80.0]
+        gain_z = [2,  0, 20.0]
+        self.pid = PIDController(gain_x=gain_x, gain_y=gain_y, gain_z=gain_z)
+        # self.pid.update_setpoint([1,1,35])
 
     def global2NED(self,pose_global,vehicle_name):
         if vehicle_name == "Drone_C":
@@ -143,13 +152,37 @@ class simulation():
             print("degrees diff ",angle_deg)
             return angle_rad
         
+        def movePID(chase_kinematics, lead_kinematics, target_point):
+            # Compute control signal using PID controller
+            dt = 0.1
+            current_pos = np.array([chase_kinematics.position.x_val, chase_kinematics.position.y_val, chase_kinematics.position.z_val])
+            current_velocity = np.array([chase_kinematics.linear_velocity.x_val, chase_kinematics.linear_velocity.y_val, chase_kinematics.linear_velocity.z_val])
+
+
+            target_point_adjusted = np.array(target_point)-np.array([1,0,0])
+            print("TARGET POINT1,",target_point_adjusted)
+
+            lead_current_pos = np.array([lead_kinematics.position.x_val, lead_kinematics.position.y_val, lead_kinematics.position.z_val])
+            target_point_adjusted = lead_current_pos-np.array([1,0,0])
+            print("TARGET POINT2,",target_point_adjusted)
+
+            self.pid.update_setpoint(target_point_adjusted)
+            
+            control_signal = self.pid.update(current_pos, dt)
+            
+            # Update quadrotor velocity using control signal
+            current_velocity[0] += control_signal[0] * dt
+            current_velocity[1] += control_signal[1] * dt
+            current_velocity[2] += control_signal[2] * dt
+
+            client.moveByVelocityAsync(current_velocity[0],current_velocity[1],current_velocity[2], self.timestep, vehicle_name = self.chase)
+        
         while True:
             print("CHASER LOOP")
             lead_pose = [client.simGetObjectPose(self.lead).position.x_val, client.simGetObjectPose(self.lead).position.y_val,client.simGetObjectPose(self.lead).position.z_val]
             state_est = self.mcl.rgb_run(current_pose=lead_pose, past_states = self.particle_state_est, time_step=self.timestep)   
             
-
-            lead_pose = [client.simGetObjectPose(self.lead).position.x_val,client.simGetObjectPose(self.lead).position.y_val,client.simGetObjectPose(self.lead).position.z_val]
+            
             chase_pose = [client.simGetObjectPose(self.chase).position.x_val,client.simGetObjectPose(self.chase).position.y_val,client.simGetObjectPose(self.chase).position.z_val]
         
             lead_kinematics = client.getMultirotorState(self.lead).kinematics_estimated
@@ -161,7 +194,16 @@ class simulation():
             yaw_chase = -1*angle_between(orient, vector2)
 
             target_state = self.global2NED(state_est[:3],self.chase)
-            client.moveToPositionAsync(0, target_state[1], target_state[2], velocity=2, timeout_sec=self.timestep, yaw_mode=airsim.YawMode(False, yaw_chase),vehicle_name=self.chase)
+            print("MCL RERTURN",state_est[:3],target_state)
+            # print("TARGET STATE ",target_state)
+
+            # temp target state using GT
+            # world_L = np.array([client.simGetObjectPose(self.lead).position.x_val,client.simGetObjectPose(self.lead).position.y_val,client.simGetObjectPose(self.lead).position.z_val])
+            # world_C = np.array([client.simGetObjectPose(self.chase).position.x_val,client.simGetObjectPose(self.chase).position.y_val,client.simGetObjectPose(self.chase).position.z_val])
+            # temptarget = world_L-world_C #- np.array([1,0,0])
+            # print("temptarget",temptarget)
+            movePID(chase_kinematics, lead_kinematics,target_state )
+            # client.moveToPositionAsync(0, target_state[1], target_state[2], velocity=2, timeout_sec=self.timestep, yaw_mode=airsim.YawMode(False, yaw_chase),vehicle_name=self.chase)
 
             self.global_state_history_L.append(lead_pose)
             self.global_state_history_C.append(chase_pose)
@@ -263,6 +305,17 @@ if __name__ == "__main__":
         sim.processing()
 
         print("Finished")       
+        
+        lead = "Drone_C"
+        world = [sim.client1.simGetObjectPose(lead).position.x_val,sim.client1.simGetObjectPose(lead).position.y_val,sim.client1.simGetObjectPose(lead).position.z_val] 
+        print("world pose, ",world  )
+        chase_kinematics = sim.client1.getMultirotorState(lead).kinematics_estimated
+        print("rel: ",chase_kinematics.position.x_val,chase_kinematics.position.y_val,chase_kinematics.position.z_val )
+        lead = "Drone_L"
+        world = [sim.client1.simGetObjectPose(lead).position.x_val,sim.client1.simGetObjectPose(lead).position.y_val,sim.client1.simGetObjectPose(lead).position.z_val] 
+        print("world pose, ",world  )
+        chase_kinematics = sim.client1.getMultirotorState(lead).kinematics_estimated
+        print("rel: ",chase_kinematics.position.x_val,chase_kinematics.position.y_val,chase_kinematics.position.z_val )
 
         sim.client1.reset()
         sim.client1.armDisarm(False)
