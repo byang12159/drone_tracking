@@ -16,7 +16,7 @@ from controller_m.gen_traj import Generate
 from perception.perception import Perception
 from simple_excitation import excitation
 import threading
-
+from pyvista_visualiser import Perception_simulation
 from controller_pid import PIDController
 
 event = threading.Event()
@@ -61,7 +61,8 @@ class simulation():
 
         print(lead_pose)
 
-        self.mcl = RunParticle(starting_state=lead_global)    
+        self.mcl = RunParticle(starting_state=lead_global)   
+        self.vis = Perception_simulation() 
 
         # Initialize mcl Position
         self.est_states = np.zeros((len(self.mcl.ref_traj) ,6)) # x y z vx vy vz
@@ -179,7 +180,24 @@ class simulation():
         
         while True:
             print("CHASER LOOP")
-            lead_pose = [client.simGetObjectPose(self.lead).position.x_val, client.simGetObjectPose(self.lead).position.y_val,client.simGetObjectPose(self.lead).position.z_val]
+            use_Perception = False
+
+            if use_Perception == False:
+                lead_pose = [client.simGetObjectPose(self.lead).position.x_val, client.simGetObjectPose(self.lead).position.y_val,client.simGetObjectPose(self.lead).position.z_val]
+            else:
+                lead_pose = client.simGetObjectPose(self.lead)
+                chase_pose = client.simGetObjectPose(self.chase)
+
+                leader_pos = np.array([lead_pose.position.x_val*1000, lead_pose.position.y_val*1000, lead_pose.position.z_val*1000 ])  # Leader position
+                chaser_pos = np.array([chase_pose.position.x_val*1000, chase_pose.position.y_val*1000, chase_pose.position.z_val*1000 ])  # Chaser position
+                leader_quat = np.array([lead_pose.orientation.w_val, lead_pose.orientation.x_val, lead_pose.orientation.y_val, -1 * lead_pose.orientation.z_val ])  # w, x, y, z for the leader
+                chaser_quat = np.array([chase_pose.orientation.w_val, chase_pose.orientation.x_val, chase_pose.orientation.y_val, -1 * chase_pose.orientation.z_val ])
+
+                transformation_matrix = self.vis.get_transform(leader_pos, leader_quat, chaser_pos, chaser_quat)
+                difference = self.vis.get_image(transformation_matrix)
+                difference = np.array(difference)/1000 
+                # lead_pose = ....'change allt o relative in MCL'
+
             state_est = self.mcl.rgb_run(current_pose=lead_pose, past_states = self.particle_state_est, time_step=self.timestep)   
             
             

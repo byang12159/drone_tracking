@@ -99,6 +99,7 @@ class Perception_simulation:
         Ts = Ts[0]
 
         print("Estimated difference: ",Ts[2][3],Ts[0][3], -Ts[1][3] )
+        return [Ts[2][3],Ts[0][3], -Ts[1][3]]
 
     def quaternion_to_euler(self,w, x, y, z):
         # Calculate roll (x-axis rotation)
@@ -120,7 +121,7 @@ class Perception_simulation:
 
         return math.degrees(roll), math.degrees(pitch), math.degrees(yaw)
 
-    def detect_aruco(self, cap=None, save="output1.png", visualize=True, marker_size=750):
+    def detect_aruco(self, cap=None, save="output1.png", visualize=False, marker_size=750):
 
 
         # ret, frame = cap.read()
@@ -202,7 +203,7 @@ if __name__ == "__main__":
     # Define the positions
     leader_pos = np.array([5000.0, 0.0,0.0])  # Leader position
     chaser_pos = np.array([0, 0.0, 0.0])  # Chaser position
-    leader_quat = [  0.9659258,0, 0, -0.258819 ]  # w, x, y, z for the leader
+    leader_quat = [  0.8838835, 0.3061862, 0.1767767, -0.3061862 ]  # w, x, y, z for the leader
     chaser_quat = [1, 0, 0, 0]
 
     per = Perception_simulation()
