@@ -121,7 +121,7 @@ class Perception_simulation:
 
         return math.degrees(roll), math.degrees(pitch), math.degrees(yaw)
 
-    def detect_aruco(self, cap=None, save="output1.png", visualize=False, marker_size=750):
+    def detect_aruco(self, cap=None, save="output1.png", visualize=True, marker_size=750):
 
 
         # ret, frame = cap.read()
@@ -186,28 +186,37 @@ class Perception_simulation:
                 print(T)
                 Ts.append(T)
 
-        if save:
-            cv2.imwrite(save, frame)
+        #if save:
+            #cv2.imwrite(save, frame)
 
         if visualize:
             
             cv2.imshow("camera view", frame)
-            cv2.waitKey(0)
-            cv2.destroyAllWindows()
+            cv2.waitKey(10)
+            #cv2.destroyAllWindows()
 
         return Ts, ids
 
     
 if __name__ == "__main__":
-        
+    #cv2.namedWindow("camera view", cv2.WINDOW_NORMAL)
     # Define the positions
-    leader_pos = np.array([5000.0, 0.0,0.0])  # Leader position
+    leader_pos = np.array([5000.0, 0.0,1000.0])  # Leader position
     chaser_pos = np.array([0, 0.0, 0.0])  # Chaser position
     leader_quat = [  0.8838835, 0.3061862, 0.1767767, -0.3061862 ]  # w, x, y, z for the leader
     chaser_quat = [1, 0, 0, 0]
 
-    per = Perception_simulation()
+    
+    for i in range(10000):
+        per = Perception_simulation()
+        leader_pos[1] = leader_pos[1] + 20
+        
+        transformation_matrix = per.get_transform(leader_pos, leader_quat, chaser_pos, chaser_quat)
 
-    transformation_matrix = per.get_transform(leader_pos, leader_quat, chaser_pos, chaser_quat)
+        per.get_image(transformation_matrix)
 
-    per.get_image(transformation_matrix)
+
+
+
+
+    
