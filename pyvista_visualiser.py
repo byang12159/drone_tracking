@@ -63,7 +63,7 @@ class Perception_simulation:
         transformation_matrix[:3, :3] = rotation_matrix  # Set the top-left 3x3 to your rotation matrix
         transformation_matrix[:3, 3] = translation_vector  # Set the top-right 3x1 to your translation vector
         
-        print("GT difference: ",leader_pos-chaser_pos)
+        # print("GT difference: ",leader_pos-chaser_pos)
         return transformation_matrix
     
     def get_image(self, transformation_matrix):
@@ -93,12 +93,14 @@ class Perception_simulation:
 
         # Save the screenshot
         virtual_img = plotter.screenshot('screenshot.png')
+        plotter.close()
+        # print("Arriced Get IMage")
         Ts, ids = self.detect_aruco()
 
  
         Ts = Ts[0]
 
-        print("Estimated difference: ",Ts[2][3],Ts[0][3], -Ts[1][3] )
+        # print("Estimated difference: ",Ts[2][3],Ts[0][3], -Ts[1][3] )
         return [Ts[2][3],Ts[0][3], -Ts[1][3]]
 
     def quaternion_to_euler(self,w, x, y, z):
@@ -183,16 +185,18 @@ class Perception_simulation:
                 T = np.identity(4)
                 T[:3, :3] = rotation_mtx
                 T[:3, 3] = translation 
-                print(T)
+                # print(T)
                 Ts.append(T)
 
         #if save:
             #cv2.imwrite(save, frame)
 
         if visualize:
-            
+            # print("IF VIS")
             cv2.imshow("camera view", frame)
-            cv2.waitKey(10)
+            cv2.waitKey(1)
+            # print("AFTER 0")
+
             #cv2.destroyAllWindows()
 
         return Ts, ids

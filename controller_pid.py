@@ -132,59 +132,63 @@ if __name__ == "__main__":
     print("step target ",step_target)
 
 
-try:
-    while True:
-        current_velocity = [client.getMultirotorState(lead).kinematics_estimated.linear_velocity.x_val, client.getMultirotorState(lead).kinematics_estimated.linear_velocity.y_val,client.getMultirotorState(lead).kinematics_estimated.linear_velocity.z_val]
-        
-        current_pos = np.array([client.getMultirotorState(lead).kinematics_estimated.position.x_val, client.getMultirotorState(lead).kinematics_estimated.position.y_val, client.getMultirotorState(lead).kinematics_estimated.position.z_val])
-   
-        # Compute control signal using PID controller
-        control_signal = pid_controller.update(current_pos, dt)
-        
-        # Update quadrotor velocity using control signal
-        current_velocity[0] += control_signal[0] * dt
-        current_velocity[1] += control_signal[1] * dt
-        current_velocity[2] += control_signal[2] * dt
+    try:
+        while True:
+            client = airsim.MultirotorClient()
+            client.confirmConnection()
+            current_velocity = [client.getMultirotorState(lead).kinematics_estimated.linear_velocity.x_val, client.getMultirotorState(lead).kinematics_estimated.linear_velocity.y_val,client.getMultirotorState(lead).kinematics_estimated.linear_velocity.z_val]
+            
+            current_pos = np.array([client.getMultirotorState(lead).kinematics_estimated.position.x_val, client.getMultirotorState(lead).kinematics_estimated.position.y_val, client.getMultirotorState(lead).kinematics_estimated.position.z_val])
     
-        # client.moveByVelocityZBodyFrameAsync(current_velocity[0],current_velocity[1],10, timestep, vehicle_name = lead)
-        client.moveByVelocityAsync(current_velocity[0],current_velocity[1],current_velocity[2], timestep, vehicle_name = lead)
+            # Compute control signal using PID controller
+            control_signal = pid_controller.update(current_pos, dt)
+            
+            # Update quadrotor velocity using control signal
+            current_velocity[0] += control_signal[0] * dt
+            current_velocity[1] += control_signal[1] * dt
+            current_velocity[2] += control_signal[2] * dt
+        
+            # client.moveByVelocityZBodyFrameAsync(current_velocity[0],current_velocity[1],10, timestep, vehicle_name = lead)
+            client.moveByVelocityAsync(current_velocity[0],current_velocity[1],current_velocity[2], timestep, vehicle_name = lead)
+            
+
+            count += 1
+
+            time.sleep(timestep)
+
+            if count == totalcount:
+                break
+
+            position_history.append(current_pos)
         
 
-        count += 1
+        client.reset()
+        client.armDisarm(False)
+        client.enableApiControl(False)
 
-        time.sleep(timestep)
+        position_history=np.array(position_history)
+        times = np.arange(0,position_history.shape[0])*timestep
+        fig, (posx,posy,posz) = plt.subplots(3, 1, figsize=(14, 10))
 
-        if count == totalcount:
-            break
+        posx.plot(times, position_history[:,0], label = "Pos x")
+        posx.legend()
+        posy.plot(times, position_history[:,1], label = "Pos y")
+        posy.legend()
+        posz.plot(times, position_history[:,2], label = "Pos z")    
+        posy.legend()
 
-        position_history.append(current_pos)
-    
-
-    client.reset()
-    client.armDisarm(False)
-    client.enableApiControl(False)
-
-    position_history=np.array(position_history)
-    times = np.arange(0,position_history.shape[0])*timestep
-    fig, (posx,posy,posz) = plt.subplots(3, 1, figsize=(14, 10))
-
-    posx.plot(times, position_history[:,0], label = "Pos x")
-    posx.legend()
-    posy.plot(times, position_history[:,1], label = "Pos y")
-    posy.legend()
-    posz.plot(times, position_history[:,2], label = "Pos z")    
-    posy.legend()
-
-    plt.show()
+        plt.show()
 
 
 
-except Exception as e:
-    print("Error Occured, Canceling: ",e)
-    traceback.print_exc()
+    except Exception as e:
+        client = airsim.MultirotorClient()
+        client.confirmConnection()
+        print("Error Occured, Canceling: ",e)
+        traceback.print_exc()
 
-    client.reset()
-    client.armDisarm(False)
+        client.reset()
+        client.armDisarm(False)
 
-    # that's enough fun for now. let's quit cleanly
-    client.enableApiControl(False)
+        # that's enough fun for now. let's quit cleanly
+        client.enableApiControl(False)

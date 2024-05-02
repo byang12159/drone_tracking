@@ -13,12 +13,12 @@ from particle_main import RunParticle
 import traceback
 import random
 from controller_m.gen_traj import Generate
-from perception.perception import Perception
-from simple_excitation import excitation
+# from perception.perception import Perception # YK
+from simple_excitation import excitation 
 import threading
 from pyvista_visualiser import Perception_simulation
 from controller_pid import PIDController
-
+import ctypes
 event = threading.Event()
 lock = threading.Lock()
 
@@ -44,7 +44,7 @@ class simulation():
         self.client1.takeoffAsync(30.0, self.chase).join()
 
         chase_kinematics = self.client1.getMultirotorState(self.chase).kinematics_estimated
-        print("KINEMATICS",chase_kinematics)
+        # print("KINEMATICS",chase_kinematics)
         
         # Find Difference between global to NED coordinate frames
         lead_pose = self.client1.simGetObjectPose(self.lead).position
@@ -59,10 +59,9 @@ class simulation():
         chase_NED = [chase_pose.x_val, chase_pose.y_val,chase_pose.z_val]
         self.chase_coord_diff = np.array(chase_NED) - np.array(chase_global)
 
-        print(lead_pose)
+        # print(lead_pose)
 
         self.mcl = RunParticle(starting_state=lead_global)   
-        self.vis = Perception_simulation() 
 
         # Initialize mcl Position
         self.est_states = np.zeros((len(self.mcl.ref_traj) ,6)) # x y z vx vy vz
@@ -113,27 +112,88 @@ class simulation():
         return x,y,z
 
 
+    # Lead Drone Movement in Figure 8
+    # def xyzARG(args, real_t):
+    #     period, sizex, sizey = args
+    #     # print('period/sizex/sizey: ', period, sizex, sizey)
+    #     if not period:
+    #         period = real_t[-1]
+    #     t = real_t / period * 2 * np.pi
+    #     x = np.sqrt(2) * np.cos(t) / (1 + np.sin(t) ** 2)
+    #     y = x * np.sin(t)
+    #     x = sizex * x
+    #     y = sizey * y
+    #     z = np.ones_like(x) * 1.5
+    #     return x, y, z
+
+
+
+
+
     def move_lead(self):
         global count 
         client = self.client2
-        print("enter self.lead")
-        while True:
-            print("LEADER LOOP")
-            effortx,efforty,effortz = self.random_traj(count,self.totalcount)
-            
-            client.moveByVelocityBodyFrameAsync(0,efforty,0, self.timestep, vehicle_name = self.lead)
-            
-            curr_time = time.time()
-            print(f"Total simulation time: {round(curr_time-self.start_time,4)} sec")
-            
-            # time.sleep(self.timestep)
-            
-            with lock:
-                count += 1
-                if count >= self.totalcount:
-                    break
 
-            time.sleep(self.timestep)
+        print("enter self.lead")
+        # while True:
+        #     print("LEADER LOOP")
+        #     effortx,efforty,effortz = self.random_traj(count,self.totalcount)
+
+        #     # client.moveOnPathAsync(lead_waypoints, 5, 20 ,airsim.DrivetrainType.ForwardOnly, airsim.YawMode(False,0), 1, 1, vehicle_name = self.lead)
+
+        #     client.moveByVelocityBodyFrameAsync(0,efforty,0, self.timestep, vehicle_name = self.lead)
+            
+        #     curr_time = time.time()
+        #     # print(f"Total simulation time: {round(curr_time-self.start_time,4)} sec")
+            
+        #     # time.sleep(self.timestep)
+            
+        #     with lock:
+        #         count += 1
+        #         if count >= self.totalcount:
+        #             break
+
+        #     time.sleep(self.timestep)
+
+        # print(client.simGetVehiclePose(self.lead).position.x_val , "  :", client.simGetVehiclePose(self.lead).position.y_val,  "  :", client.simGetVehiclePose(self.lead).position.z_val)
+
+
+
+        # x=0-5
+        # y=0 # YK
+        # z=34.27  
+        # center = airsim.Vector3r(0, y, z) 
+        # radius = 10 
+        # num_waypoints = 30
+        # waypoints = []
+        # for i in range(num_waypoints):
+        #     angle = 2 * np.pi * (i / (num_waypoints - 1))
+        #     x = center.x_val + radius * np.cos(angle)
+        #     y = center.y_val + radius * np.sin(angle)
+        #     z = center.z_val  # Maintain same altitude
+        #     waypoint = airsim.Vector3r(x, y, z)
+        #     waypoints.append(waypoint)
+        # client.moveOnPathAsync(waypoints, 1, 90 ,airsim.DrivetrainType.MaxDegreeOfFreedom, airsim.YawMode(False,0), 1, 1, vehicle_name = self.lead)
+        center = airsim.Vector3r(0, 0, 34.27 ) 
+        waypoints = []
+        waypoints.append(center)
+        for cnt in range(300):
+            period=100
+            sizex=2.5
+            sizey=2.5
+            t = cnt / period * 2 * np.pi
+            x = np.sqrt(2) * np.cos(t) / (1 + np.sin(t) ** 2)
+            y = x * np.sin(t)
+            x = sizex * x
+            y = sizey * y
+            # z = np.ones_like(x) * 1.5
+            waypoint = airsim.Vector3r(x, y, 34.27) 
+            waypoints.append(waypoint) 
+        client.moveOnPathAsync(waypoints, 1, 60 ,airsim.DrivetrainType.MaxDegreeOfFreedom, airsim.YawMode(False,0), 1, 1, vehicle_name = self.lead)                 
+
+
+        
+
 
     def move_chase(self):
         global count 
@@ -146,11 +206,11 @@ class simulation():
         
         def angle_between(v1, v2):
             dot_product = np.dot(v1, v2)
-            magnitude_v1 = np.linalg.norm(v1)
+            magnitude_v1 = np.linalg.norm(v1) 
             magnitude_v2 = np.linalg.norm(v2)
             angle_rad = np.arccos(dot_product / (magnitude_v1 * magnitude_v2))
             angle_deg = np.degrees(angle_rad)
-            print("degrees diff ",angle_deg)
+            # print("degrees diff ",angle_deg)
             return angle_rad
         
         def movePID(chase_kinematics, lead_kinematics, target_point):
@@ -161,11 +221,11 @@ class simulation():
 
 
             target_point_adjusted = np.array(target_point)-np.array([1,0,0])
-            print("TARGET POINT1,",target_point_adjusted)
+            # print("TARGET POINT1,",target_point_adjusted)
 
             lead_current_pos = np.array([lead_kinematics.position.x_val, lead_kinematics.position.y_val, lead_kinematics.position.z_val])
-            target_point_adjusted = lead_current_pos-np.array([1,0,0])
-            print("TARGET POINT2,",target_point_adjusted)
+            target_point_adjusted = lead_current_pos-np.array([3,0,0])
+            # print("TARGET POINT2,",target_point_adjusted)
 
             self.pid.update_setpoint(target_point_adjusted)
             
@@ -175,28 +235,44 @@ class simulation():
             current_velocity[0] += control_signal[0] * dt
             current_velocity[1] += control_signal[1] * dt
             current_velocity[2] += control_signal[2] * dt
+            # print(current_velocity)
 
-            client.moveByVelocityAsync(current_velocity[0],current_velocity[1],current_velocity[2], self.timestep, vehicle_name = self.chase)
+            client.moveByVelocityAsync(current_velocity[0],current_velocity[1],current_velocity[2], self.timestep, airsim.DrivetrainType.ForwardOnly, vehicle_name = self.chase)
         
         while True:
             print("CHASER LOOP")
-            use_Perception = False
-
+            global tik
+            fax="tik" in globals()
+            if(fax):
+                tik+=1
+            else:
+                tik=0
+                print("START" , client.simGetObjectPose(self.lead).position.x_val, client.simGetObjectPose(self.lead).position.y_val,client.simGetObjectPose(self.lead).position.z_val )
+            # print("TIK VALUE", tik)
+            tmp=False
+            if(tik>10): 
+                tmp=True
+            use_Perception = True
             if use_Perception == False:
                 lead_pose = [client.simGetObjectPose(self.lead).position.x_val, client.simGetObjectPose(self.lead).position.y_val,client.simGetObjectPose(self.lead).position.z_val]
             else:
                 lead_pose = client.simGetObjectPose(self.lead)
                 chase_pose = client.simGetObjectPose(self.chase)
-
+                
                 leader_pos = np.array([lead_pose.position.x_val*1000, lead_pose.position.y_val*1000, lead_pose.position.z_val*1000 ])  # Leader position
                 chaser_pos = np.array([chase_pose.position.x_val*1000, chase_pose.position.y_val*1000, chase_pose.position.z_val*1000 ])  # Chaser position
                 leader_quat = np.array([lead_pose.orientation.w_val, lead_pose.orientation.x_val, lead_pose.orientation.y_val, -1 * lead_pose.orientation.z_val ])  # w, x, y, z for the leader
                 chaser_quat = np.array([chase_pose.orientation.w_val, chase_pose.orientation.x_val, chase_pose.orientation.y_val, -1 * chase_pose.orientation.z_val ])
-
+                
+                client.simPause(tmp)
+                self.vis = Perception_simulation() # YK
                 transformation_matrix = self.vis.get_transform(leader_pos, leader_quat, chaser_pos, chaser_quat)
                 difference = self.vis.get_image(transformation_matrix)
-                difference = np.array(difference)/1000 
-                # lead_pose = ....'change allt o relative in MCL'
+                client.simPause(False)
+
+                difference = np.array(difference)/1000
+                # lead_pose = ....'change all to relative in MCL'
+                lead_pose = [chase_pose.position.x_val + difference[0], chase_pose.position.y_val + difference[1], chase_pose.position.z_val + difference[2]] # Is this right # YK
 
             state_est = self.mcl.rgb_run(current_pose=lead_pose, past_states = self.particle_state_est, time_step=self.timestep)   
             
@@ -208,11 +284,12 @@ class simulation():
 
             orient = rotation_2d_z(-chase_kinematics.orientation.z_val, np.array([1,0]))
             vector2 = np.array([lead_pose[0]-chase_pose[0],lead_pose[1]-chase_pose[1]])
-            print(f"orient: {orient}, vecotr2: {vector2}")
+            # print(f"orient: {orient}, vecotr2: {vector2}")
             yaw_chase = -1*angle_between(orient, vector2)
 
             target_state = self.global2NED(state_est[:3],self.chase)
-            print("MCL RERTURN",state_est[:3],target_state)
+            # target_state = self.global2NED([client.simGetVehiclePose(self.lead).position.x_val,client.simGetVehiclePose(self.lead).position.y_val, client.simGetVehiclePose(self.lead).position.z_val ],self.chase)
+            # print("MCL RERTURN",state_est[:3],target_state)
             # print("TARGET STATE ",target_state)
 
             # temp target state using GT
@@ -235,7 +312,20 @@ class simulation():
             self.PF_history_x.append(np.array(self.mcl.filter.particles['position'][:,0]).flatten())
             self.PF_history_y.append(np.array(self.mcl.filter.particles['position'][:,1]).flatten())
             self.PF_history_z.append(np.array(self.mcl.filter.particles['position'][:,2]).flatten())
+            print("POS DIFF X: " , client.simGetObjectPose(self.lead).position.x_val - client.simGetObjectPose(self.chase).position.x_val)
+            print("POS DIFF Y: " , client.simGetObjectPose(self.lead).position.y_val - client.simGetObjectPose(self.chase).position.y_val) #NEED 
+            f = open("RAD10.txt", "a")
+            x_diff = str(client.simGetObjectPose(self.lead).position.x_val - client.simGetObjectPose(self.chase).position.x_val)
+            f.write(x_diff)
+            f.write( " , ")
+            y_diff = str (client.simGetObjectPose(self.lead).position.y_val - client.simGetObjectPose(self.chase).position.y_val)
+            f.write(y_diff)
+            f.write( " \n")
+            f.close()
 
+
+            retX.append(client.simGetObjectPose(self.lead).position.x_val - client.simGetObjectPose(self.chase).position.x_val)
+            retY.append(client.simGetObjectPose(self.lead).position.y_val - client.simGetObjectPose(self.chase).position.y_val)
             with lock:
                 if count >= self.totalcount:
                     break
@@ -304,25 +394,52 @@ class simulation():
         plt.show()
 
 
+    def raise_exception(self):
 
+            thread_id = self.get_id()
+
+            res = ctypes.pythonapi.PyThreadState_SetAsyncExc(thread_id,
+
+                ctypes.py_object(SystemExit))
+
+            if res > 1:
+
+                ctypes.pythonapi.PyThreadState_SetAsyncExc(thread_id, 0)
+
+                print('Exception raise failure')
+
+
+# YK
 if __name__ == "__main__":
+
+# YK
     sim = simulation()
     threadL = threading.Thread(target=sim.move_lead, name='Thread lead')
     threadC = threading.Thread(target=sim.move_chase, name='Thread Chase')
+    global retX
+    retX = []
+    global retY
+    retY = []
+    f = open("RAD10.txt", "w")
+    f.close()
 
     try:
         print("###################################################################################### STARTING SIMULATION ##########################################################################")
         # Start the threads
         threadL.start()
         threadC.start()
-
         # Wait for both threads to finish
         threadL.join()
         threadC.join()
 
-        sim.processing()
-
+        # sim.processing()
+        time.sleep(90) # YK
+        # threadL.raise_exception()
+        # threadC.raise_exception()
         print("Finished")       
+        print(retX)
+        print("KRISHNAISMOODYd")
+        print(retY)
         
         lead = "Drone_C"
         world = [sim.client1.simGetObjectPose(lead).position.x_val,sim.client1.simGetObjectPose(lead).position.y_val,sim.client1.simGetObjectPose(lead).position.z_val] 
