@@ -33,9 +33,30 @@ if __name__ == "__main__":
         # current_velocity = client.getMultirotorState(lead).kinematics_estimated.linear_velocity
         # acel = client.getMultirotorState(lead).kinematics_estimated.linear_acceleration
         # print("kinematics",total)
-        print("sim",client.simGetVehiclePose(chase))
+        print("sim vehicle",client.simGetVehiclePose(chase))
         print("start lead pose: ",client.simGetObjectPose(lead))
+        print("kinematics: ",client.getMultirotorState(lead))
         print(" start chase pose: ",client.simGetObjectPose(chase))
+
+        waypoints=[]
+        lead_pose = client.simGetVehiclePose(lead).position
+        lead_NED = [lead_pose.x_val, lead_pose.y_val,lead_pose.z_val]
+        print(lead_NED)
+        # for i in range(num_waypoints):
+        #     angle = 2 * np.pi * (i / (num_waypoints - 1))
+        #     x = center.x_val + radius * np.cos(angle)
+        #     y = center.y_val + radius * np.sin(angle)
+        #     z = center.z_val  # Maintain same altitude
+        #     waypoint = airsim.Vector3r(x, y, z)
+        #     waypoints.append(waypoint)
+
+        waypoint = airsim.Vector3r(lead_NED[0]+10,lead_NED[1]+10,lead_NED[2]+10)
+        waypoints.append(waypoint)
+        waypoint = airsim.Vector3r(lead_NED[0]-10,lead_NED[1]+10,lead_NED[2])
+        waypoints.append(waypoint)
+
+        vel = 0.5
+        client.moveOnPathAsync(waypoints, vel, airsim.YawMode(False,0), lookahead=1, adaptive_lookahead=1, vehicle_name = lead).join()
         # waypoints = [
         #         airsim.Vector3r(0, 0 , 2),
         #         airsim.Vector3r(0, 2, 2),
