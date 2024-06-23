@@ -152,6 +152,10 @@ class ParticleFilter:
                 # TODO do the matrix math in gtsam to avoid all the type casting
                 R = R @ expm(r)
 
+    def compute_var(self):
+        variance = np.var(self.particles['position'], axis=0)
+        return variance
+    
     def odometry_update(self,curr_state_est):
         system_time_interval = 0.001
         offset = system_time_interval*curr_state_est[3:]
