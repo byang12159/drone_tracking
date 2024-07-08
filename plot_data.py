@@ -22,7 +22,7 @@ def read_data_from_csv(csv_file):
     return data
 
 # Example usage
-csv_file = 'data.csv'
+csv_file = 'data2.csv'
 data = read_data_from_csv(csv_file)
 
 timestep = 0.01

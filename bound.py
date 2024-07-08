@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 import pickle
 from samplecircle import samplecircle
-from hellodrone import simulation
+from hellodrone import Simulation
 import traceback
 # data = {"name": "John", "age": 30}
 
@@ -46,6 +46,7 @@ def plot_rec(ax, min_x,max_x,min_y,max_y,min_z,max_z):
         ax.plot([x[connection[0]], x[connection[1]]],
                 [y[connection[0]], y[connection[1]]],
                 [z[connection[0]], z[connection[1]]], '-',color='red')
+        
 def prediction(initial_state, timestep, steps, camera_depth,accel_range, num_trajectory = 100):
     
     total_trajectories=[]
@@ -123,7 +124,7 @@ if __name__ == "__main__":
         raw_norms=[]
         for simulation_iteration in range(100):
             
-            sim = simulation(totalcount=35)
+            sim = Simulation(totalcount=35)
             # np.random.seed(42)
             count =0
             # lead = "Drone_L"
